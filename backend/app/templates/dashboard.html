@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block content %}
+
+<section class="attention">
+  <h2>Attention <span class="count">({{ alerts|length }})</span></h2>
+  {% if alerts %}
+  <ul class="alert-list">
+    {% for a in alerts %}
+    <li class="alert-row alert-{{ a.kind }}">
+      <a href="/beds/{{ a.bed_id }}">{{ a.label }}</a>
+      <span class="ward">{{ a.ward }}</span>
+      <span class="kind">{{ a.kind }}</span>
+      <span class="age" data-since="{{ a.raised_at.isoformat() }}"></span>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="empty">No active alerts.</p>
+  {% endif %}
+</section>
+
+<form class="filters" method="get" action="/">
+  <label>Ward
+    <select name="ward">
+      <option value="">— any —</option>
+      {% for w in wards %}
+      <option value="{{ w }}" {% if w == filter_ward %}selected{% endif %}>{{ w }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Status
+    <select name="status">
+      <option value="">— any —</option>
+      {% for s in ["alert", "active", "ok", "empty"] %}
+      <option value="{{ s }}" {% if s == filter_status %}selected{% endif %}>{{ s }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Search
+    <input type="text" name="q" value="{{ filter_q }}" placeholder="bed# or patient">
+  </label>
+  <button type="submit">Apply</button>
+  <a class="clear" href="/">Clear</a>
+</form>
+
+{% if rows %}
+<section class="grid">
+  {% for r in rows %}
+  <a class="card card-{{ r.status }}" href="/beds/{{ r.bed_id }}">
+    <header>
+      <span class="bed">{{ r.label }}</span>
+      <span class="ward">{{ r.ward }}</span>
+    </header>
+    <div class="patient">
+      {% if r.name %}{{ r.name }}{% else %}<em>empty</em>{% endif %}
+    </div>
+    {% if r.intake_target_ml %}
+    {% set pct = (r.intake_ml * 100 / r.intake_target_ml) | round(0, 'floor') | int %}
+    <div class="bar"><div class="fill" style="width: {{ [pct, 100]|min }}%"></div></div>
+    <div class="intake">{{ r.intake_ml }} / {{ r.intake_target_ml }} ml ({{ pct }}%)</div>
+    {% endif %}
+    <div class="last-drink" data-since="{% if r.last_drink %}{{ r.last_drink.isoformat() }}{% endif %}">
+      {% if r.last_drink %}last drink: <span></span>{% else %}no drink today{% endif %}
+    </div>
+    {% if r.alert_count %}<div class="badge">{{ r.alert_count }} alert{{ 's' if r.alert_count > 1 }}</div>{% endif %}
+  </a>
+  {% endfor %}
+</section>
+{% else %}
+<p class="hint">Pick a filter above to view beds.</p>
+{% endif %}
+
+{% endblock %}
