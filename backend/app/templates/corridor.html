@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="refresh" content="30">
+  <title>Hydration — Corridor Display</title>
+  <link rel="stylesheet" href="/static/corridor.css">
+</head>
+<body>
+
+<header class="corridor-header">
+  <div class="title">HYDRATION ALERTS</div>
+  <div class="clock" id="clock">--:--</div>
+  <div class="count">
+    <span class="count-num">{{ rows|length }}</span>
+    <span class="count-label">attention</span>
+  </div>
+</header>
+
+{% if rows %}
+<ol class="ranking">
+  {% for r in rows %}
+  {% set pct = (r.intake_ml * 100 / r.intake_target_ml) | round(0, 'floor') | int
+                if r.intake_target_ml else 0 %}
+  <li class="row sev-{{ r.kind }}">
+    <span class="rank">{{ loop.index }}</span>
+    <span class="bed">{{ r.label }}</span>
+    <span class="ward">{{ r.ward }}</span>
+    <span class="patient">{{ r.patient_name or '—' }}</span>
+    <span class="kind kind-{{ r.kind }}">{{ {
+        'button': 'CALL',
+        'no_drink': 'NO DRINK',
+        'device_offline': 'OFFLINE',
+        'behind_target': 'BEHIND',
+    }[r.kind] }}</span>
+    <span class="intake">
+      {% if r.intake_target_ml %}{{ pct }}%{% else %}—{% endif %}
+    </span>
+    <span class="age" data-since="{{ r.raised_at.isoformat() }}">…</span>
+  </li>
+  {% endfor %}
+</ol>
+{% else %}
+<div class="all-clear">
+  <div class="ac-icon">✓</div>
+  <div class="ac-text">ALL BEDS WITHIN RANGE</div>
+</div>
+{% endif %}
+
+<footer class="corridor-footer">
+  Auto-refresh every 30s · last loaded <span id="loaded">now</span>
+</footer>
+
+<script>
+  // Live clock
+  const clock = document.getElementById("clock");
+  const tick = () => {
+    const d = new Date();
+    clock.textContent =
+      String(d.getHours()).padStart(2, "0") + ":" +
+      String(d.getMinutes()).padStart(2, "0") + ":" +
+      String(d.getSeconds()).padStart(2, "0");
+  };
+  tick(); setInterval(tick, 1000);
+
+  // "5m ago" age labels
+  const renderAges = () => {
+    document.querySelectorAll(".age[data-since]").forEach((el) => {
+      const mins = Math.floor((Date.now() - new Date(el.dataset.since)) / 60000);
+      el.textContent =
+        mins < 1 ? "now" :
+        mins < 60 ? mins + "m" :
+        mins < 1440 ? Math.floor(mins / 60) + "h" :
+        Math.floor(mins / 1440) + "d";
+    });
+  };
+  renderAges(); setInterval(renderAges, 15_000);
+
+  // "loaded" stamp
+  const loadedAt = new Date();
+  setInterval(() => {
+    const s = Math.floor((Date.now() - loadedAt) / 1000);
+    document.getElementById("loaded").textContent =
+      s < 60 ? s + "s ago" : Math.floor(s / 60) + "m ago";
+  }, 1000);
+
+  // Push-driven refresh (faster than the 30s meta)
+  if (window.EventSource) {
+    const es = new EventSource("/sse");
+    let t;
+    const reload = () => { clearTimeout(t); t = setTimeout(() => location.reload(), 1500); };
+    es.addEventListener("event", reload);
+    es.addEventListener("alert", reload);
+  }
+</script>
+
+</body>
+</html>
