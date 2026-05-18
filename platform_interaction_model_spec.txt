@@ -1,0 +1,322 @@
+HYDRATION MONITORING SYSTEM
+Platform-Based Interaction Classification Specification
+
+
+SYSTEM OVERVIEW
+This system uses a single load cell embedded in a platform/coaster.
+The sensor measures ONLY the weight applied to the platform.
+
+The sensor does NOT directly observe:
+    - drinking
+    - swallowing
+    - spilling
+    - cup orientation
+    - hand movement
+
+The system therefore performs:
+    INTERACTION INFERENCE
+rather than direct action detection.
+
+
+CORE PRINCIPLE
+When the cup is lifted from the platform,
+the sensor becomes blind.
+
+Example:
+    Cup on platform:
+        520g
+    Cup removed:
+        0g
+    Cup returned:
+        430g
+
+The system can ONLY reliably infer:
+    Net weight change:
+        -90g
+
+The cause of the weight change
+(drinking, spilling, pouring)
+cannot be directly observed.
+
+
+SYSTEM ARCHITECTURE
+
+RAW LOAD CELL SIGNAL
+        ↓
+NOISE FILTERING
+        ↓
+STABILITY DETECTION
+        ↓
+STATE MACHINE
+        ↓
+INTERACTION CLASSIFICATION
+        ↓
+NET WEIGHT ANALYSIS
+        ↓
+CLINICAL INTERPRETATION
+
+
+INTERACTION STATES
+
+1. NO_CUP
+Definition:
+    Platform empty.
+
+Characteristics:
+    Weight near zero.
+
+Interpretation:
+    No container detected.
+
+
+2. CUP_PRESENT_STABLE
+Definition:
+    Cup/bottle resting stably on platform.
+
+Characteristics:
+    - low variance
+    - stable average weight
+    - no major slope
+
+Interpretation:
+    Idle monitoring state.
+
+
+3. CUP_REMOVED
+Definition:
+    Cup lifted from platform.
+
+Characteristics:
+    - rapid drop toward zero
+    - large negative slope
+    - sudden disappearance of weight
+
+Actions:
+    Store:
+        pre_removal_weight
+        removal_timestamp
+
+Transition:
+    WAITING_FOR_RETURN
+
+
+4. WAITING_FOR_RETURN
+Definition:
+    Cup absent from platform.
+
+Characteristics:
+    Weight remains near zero.
+
+Interpretation:
+    System has NO visibility during this period.
+
+Possible unseen actions:
+    - drinking
+    - spilling
+    - refilling
+    - movement
+
+
+5. CUP_RETURN_DETECTED
+Definition:
+    Cup placed back onto platform.
+
+Characteristics:
+    - rapid increase from near-zero
+    - oscillation/ringing possible
+    - unstable readings initially
+
+Transition:
+    SETTLING_AFTER_RETURN
+
+
+6. SETTLING_AFTER_RETURN
+Definition:
+    Waiting for mechanical oscillation to stop.
+
+Characteristics:
+    - fluctuating readings
+    - decreasing variance
+
+Actions:
+    Wait until stable baseline achieved.
+
+
+7. ANALYZE_NET_CHANGE
+Definition:
+    Compare pre-removal and post-return weights.
+
+Calculation:
+
+    net_change =
+        returned_weight - pre_removal_weight
+
+Possible Outcomes:
+
+    net_change < 0:
+        NET_WEIGHT_LOSS
+
+    net_change > 0:
+        NET_WEIGHT_GAIN
+
+    net_change ≈ 0:
+        NO_MEANINGFUL_CHANGE
+
+
+8. UNSTABLE_RETURN
+Definition:
+    Returned cup fails to stabilize.
+
+Possible Causes:
+    - partial platform contact
+    - unstable placement
+    - shaking
+    - external disturbance
+
+
+9. SENSOR_NOISE
+Definition:
+    Small meaningless fluctuations.
+
+Characteristics:
+    - tiny random changes
+    - low amplitude
+    - inconsistent direction
+
+
+10. SENSOR_FAULT
+Definition:
+    Impossible or corrupted readings.
+
+Characteristics:
+    - clipping
+    - frozen values
+    - impossible jumps
+    - saturation
+
+
+IMPORTANT ENGINEERING CONSIDERATIONS
+
+1. SENSOR BLINDNESS
+While cup is removed:
+    Sensor has no visibility.
+
+Therefore:
+    The system cannot directly determine:
+        - drink vs spill
+        - exact interaction type
+
+
+2. STABILITY DETECTION
+Instantaneous readings are unreliable.
+
+Stable averages must be used before:
+    - removal
+    - return comparison
+
+
+3. MECHANICAL OSCILLATION
+Cup placement creates ringing.
+
+Example:
+
+    430
+    470
+    445
+    455
+    448
+
+Therefore:
+    Settling logic is required.
+
+
+4. EMPTY PLATFORM THRESHOLD
+True zero is unreliable.
+
+Use threshold:
+
+    weight < empty_threshold
+
+Example:
+    20g
+
+
+5. EVENT SEGMENTATION
+The classifier operates on:
+    interaction cycles
+
+NOT individual readings.
+
+
+6. CLASSIFICATION LIMITATIONS
+A load cell alone cannot directly distinguish:
+    - drinking
+    - spilling
+    - pouring
+
+Only weight change is observable.
+
+
+STATE MACHINE
+
+NO_CUP
+    ↓
+CUP_PRESENT_STABLE
+    ↓
+CUP_REMOVED
+    ↓
+WAITING_FOR_RETURN
+    ↓
+CUP_RETURN_DETECTED
+    ↓
+SETTLING_AFTER_RETURN
+    ↓
+ANALYZE_NET_CHANGE
+    ↓
+CUP_PRESENT_STABLE
+
+
+RECOMMENDED PARAMETERS
+
+Sampling Rate:
+    10Hz – 40Hz
+
+Stable Variance Threshold:
+    configurable
+
+Cup Absent Threshold:
+    10g – 20g
+
+Minimum Stable Duration:
+    1s – 3s
+
+
+CLINICAL INTERPRETATION LAYER
+
+Physical Observation:
+    NET_WEIGHT_LOSS
+
+Possible Interpretation:
+    Likely fluid consumed.
+
+Physical Observation:
+    NET_WEIGHT_GAIN
+
+Possible Interpretation:
+    Refill event.
+
+Physical Observation:
+    NO_MEANINGFUL_CHANGE
+
+Possible Interpretation:
+    Cup moved only.
+
+
+FUTURE EXTENSIONS
+
+- machine learning sequence analysis
+- patient-specific interaction models
+- adaptive thresholds
+- anomaly detection
+- temporal pattern learning
+- multimodal sensing
