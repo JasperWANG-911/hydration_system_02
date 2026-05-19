@@ -5,6 +5,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Alert, Bed, Device, Event, Patient, Stay
 
+# Higher = more urgent. Tunable.
+ALERT_SEVERITY: dict[str, int] = {
+    "button": 100,
+    "no_drink": 40,
+    "device_offline": 30,
+    "behind_target": 20,
+}
+
 
 async def list_wards(session: AsyncSession) -> list[str]:
     rows = await session.execute(select(Bed.ward).distinct().order_by(Bed.ward))
@@ -109,6 +117,68 @@ def _classify(row: dict) -> str:
     if target > 0 and row["intake_ml"] >= target:
         return "ok"
     return "active"
+
+
+async def corridor_ranking(session: AsyncSession, limit: int = 20) -> list[dict]:
+    """Beds with open alerts, ranked by severity then alert age."""
+    today = _today_start()
+
+    intake_subq = (
+        select(
+            Device.bed_id.label("bed_id"),
+            func.coalesce(func.sum(Event.intake_delta_ml), 0).label("intake_ml"),
+            func.max(Event.ts).filter(Event.type == "drink").label("last_drink"),
+        )
+        .select_from(Device)
+        .outerjoin(
+            Event, and_(Event.device_id == Device.device_id, Event.ts >= today)
+        )
+        .group_by(Device.bed_id)
+        .subquery()
+    )
+
+    stmt = (
+        select(
+            Alert.alert_id,
+            Alert.kind,
+            Alert.raised_at,
+            Bed.bed_id,
+            Bed.label,
+            Bed.ward,
+            Bed.room,
+            Patient.name.label("patient_name"),
+            Patient.intake_target_ml,
+            func.coalesce(intake_subq.c.intake_ml, 0).label("intake_ml"),
+            intake_subq.c.last_drink,
+        )
+        .select_from(Alert)
+        .join(Bed, Bed.bed_id == Alert.bed_id)
+        .outerjoin(
+            Stay, and_(Stay.bed_id == Bed.bed_id, Stay.discharged_at.is_(None))
+        )
+        .outerjoin(Patient, Patient.patient_id == Stay.patient_id)
+        .outerjoin(intake_subq, intake_subq.c.bed_id == Bed.bed_id)
+        .where(Alert.resolved_at.is_(None))
+    )
+    rows = [dict(r._mapping) for r in await session.execute(stmt)]
+
+    # Group by bed: keep highest-severity (then oldest) alert per bed
+    by_bed: dict[str, dict] = {}
+    for r in rows:
+        sev = ALERT_SEVERITY.get(r["kind"], 0)
+        r["severity"] = sev
+        cur = by_bed.get(r["bed_id"])
+        if (
+            cur is None
+            or sev > cur["severity"]
+            or (sev == cur["severity"] and r["raised_at"] < cur["raised_at"])
+        ):
+            by_bed[r["bed_id"]] = r
+
+    ranked = sorted(
+        by_bed.values(), key=lambda r: (-r["severity"], r["raised_at"])
+    )
+    return ranked[:limit]
 
 
 async def bed_detail(session: AsyncSession, bed_id: str) -> dict | None:

@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from app.ingest import alert_loop, mqtt_loop
-from app.routes import admin, beds, dashboard, sse
+from app.routes import admin, beds, corridor, dashboard, sse
 
 logging.basicConfig(level=logging.INFO)
 
@@ -40,4 +40,5 @@ app.state.templates = templates
 app.include_router(dashboard.router)
 app.include_router(beds.router)
 app.include_router(admin.router)
+app.include_router(corridor.router)
 app.include_router(sse.router)
