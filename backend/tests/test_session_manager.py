@@ -2,8 +2,8 @@
 
 import time
 import pytest
-from platform_interaction_classifier import InteractionResult, PlatformState
-from session_manager import SessionManager, SessionState
+from app.interactions.classifier import InteractionResult, PlatformState
+from app.interactions.session import SessionManager, SessionState
 
 
 def make_loss_result(net_change_g: float, confidence: float = 0.88) -> InteractionResult:
@@ -180,3 +180,10 @@ class TestLastDrinkTime:
         t = manager.summary().last_drink_time
         assert t is not None
         assert before <= t <= after
+
+
+class TestExplicitTimestamp:
+    def test_drink_uses_supplied_now_ts(self, manager):
+        replay_ts = 1_700_000_000.0
+        manager.process(make_loss_result(-80.0), now_ts=replay_ts)
+        assert manager.summary().last_drink_time == replay_ts

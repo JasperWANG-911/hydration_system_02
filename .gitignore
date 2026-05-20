@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# Virtualenvs
+.venv/
+venv/
+env/
+
+# Local config
+.env
+.env.local
+
+# Claude Code workspace state
+.claude/
+
+# Notebooks scratch
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/

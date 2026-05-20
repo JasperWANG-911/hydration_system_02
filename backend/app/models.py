@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import BigInteger, ForeignKey, Integer, String, func
+from sqlalchemy import BigInteger, Boolean, Float, ForeignKey, Integer, String, func
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -49,6 +49,16 @@ class Event(Base):
     type: Mapped[str] = mapped_column(String)
     payload: Mapped[dict] = mapped_column(JSONB)
     intake_delta_ml: Mapped[int | None] = mapped_column(Integer)
+
+
+class Measurement(Base):
+    __tablename__ = "measurements"
+    ts: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), primary_key=True)
+    device_id: Mapped[str] = mapped_column(
+        ForeignKey("devices.device_id"), primary_key=True
+    )
+    weight_g: Mapped[float] = mapped_column(Float)
+    cup_present: Mapped[bool | None] = mapped_column(Boolean)
 
 
 class Alert(Base):

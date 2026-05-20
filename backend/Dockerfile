@@ -11,7 +11,7 @@ RUN pip install --no-cache-dir \
         "sqlalchemy[asyncio]>=2.0" \
         "asyncpg>=0.29" \
         "pydantic-settings>=2.4" \
-        "aiomqtt>=2.3" \
+        "httpx>=0.27" \
         "python-multipart>=0.0.9"
 
 COPY app ./app

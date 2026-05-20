@@ -40,7 +40,7 @@ class InteractionResult:
 
     Attributes:
         state: The inferred platform state for this update cycle.
-        confidence: Estimated confidence in the classification (0.0–1.0).
+        confidence: Estimated confidence in the classification (0.0-1.0).
         metadata: Optional supporting data (weights, net change, etc.).
     """
 
@@ -159,7 +159,9 @@ class PlatformInteractionClassifier:
             return True
         return False
 
-    def update(self, weight: float) -> InteractionResult:
+    def update(
+        self, weight: float, now_ts: float | None = None
+    ) -> InteractionResult:
         """
         Process one raw load-cell reading and advance the state machine.
 
@@ -169,12 +171,16 @@ class PlatformInteractionClassifier:
 
         Args:
             weight: Current load cell reading in grams.
+            now_ts: Unix timestamp to attribute to this sample. Defaults
+                to ``time.time()`` for live readings; pass the sample's
+                own timestamp when replaying buffered data so the
+                cup-absent timeout uses the right reference.
 
         Returns:
             An :class:`InteractionResult` describing the inferred state,
             a confidence score, and any relevant metadata for this cycle.
         """
-        timestamp = time.time()
+        timestamp = time.time() if now_ts is None else now_ts
         self.weight_buffer.append(weight)
 
         if self._detect_sensor_fault(weight):

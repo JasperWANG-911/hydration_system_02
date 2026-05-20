@@ -12,11 +12,11 @@ aggregation layer between the classifier and the rest of the system.
 """
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import Callable
 
-from platform_interaction_classifier import InteractionResult, PlatformState
+from app.interactions.classifier import InteractionResult, PlatformState
 
 
 class SessionState(Enum):
@@ -36,7 +36,7 @@ class DrinkEvent:
     Attributes:
         timestamp: Unix timestamp when the event was recorded.
         volume_ml: Estimated volume consumed in millilitres.
-        confidence: Confidence score inherited from the classifier (0.0–1.0).
+        confidence: Confidence score inherited from the classifier (0.0-1.0).
         raw_net_change_g: Raw net weight change reported by the classifier.
             Negative values indicate weight loss (consumption).
     """
@@ -55,7 +55,7 @@ class RefillEvent:
     Attributes:
         timestamp: Unix timestamp when the event was recorded.
         volume_added_ml: Estimated volume added in millilitres.
-        confidence: Confidence score inherited from the classifier (0.0–1.0).
+        confidence: Confidence score inherited from the classifier (0.0-1.0).
         raw_net_change_g: Raw net weight change reported by the classifier.
             Positive values indicate weight gain (refill).
     """
@@ -229,7 +229,9 @@ class SessionManager:
     # Event processing
     # -------------------------------------------------------------------------
 
-    def process(self, result: InteractionResult) -> None:
+    def process(
+        self, result: InteractionResult, now_ts: float | None = None
+    ) -> None:
         """
         Ingest one classifier result and update session state.
 
@@ -241,9 +243,16 @@ class SessionManager:
         Args:
             result: The :class:`InteractionResult` produced by the
                 platform classifier for the current sample cycle.
+            now_ts: Unix timestamp to attach to any recorded event.
+                Defaults to ``time.time()`` for live processing; pass the
+                originating sample's timestamp when replaying buffered
+                data so the event's ``timestamp`` field reflects when
+                the interaction actually occurred.
         """
         if self._state != SessionState.ACTIVE:
             return
+
+        timestamp = time.time() if now_ts is None else now_ts
 
         if result.state == PlatformState.SENSOR_FAULT:
             for cb in self._on_fault_callbacks:
@@ -251,12 +260,14 @@ class SessionManager:
             return
 
         if result.state == PlatformState.NET_WEIGHT_LOSS:
-            self._handle_weight_loss(result)
+            self._handle_weight_loss(result, timestamp)
 
         elif result.state == PlatformState.NET_WEIGHT_GAIN:
-            self._handle_weight_gain(result)
+            self._handle_weight_gain(result, timestamp)
 
-    def _handle_weight_loss(self, result: InteractionResult) -> None:
+    def _handle_weight_loss(
+        self, result: InteractionResult, timestamp: float
+    ) -> None:
         net_change_g = result.metadata.get("net_change", 0.0)
         volume_ml = abs(net_change_g) / self.fluid_density_g_per_ml
 
@@ -266,7 +277,7 @@ class SessionManager:
         clamped = min(volume_ml, self.max_credible_volume_ml)
 
         event = DrinkEvent(
-            timestamp=time.time(),
+            timestamp=timestamp,
             volume_ml=clamped,
             confidence=result.confidence,
             raw_net_change_g=net_change_g,
@@ -278,12 +289,14 @@ class SessionManager:
         for cb in self._on_drink_callbacks:
             cb(event)
 
-    def _handle_weight_gain(self, result: InteractionResult) -> None:
+    def _handle_weight_gain(
+        self, result: InteractionResult, timestamp: float
+    ) -> None:
         net_change_g = result.metadata.get("net_change", 0.0)
         volume_ml = net_change_g / self.fluid_density_g_per_ml
 
         event = RefillEvent(
-            timestamp=time.time(),
+            timestamp=timestamp,
             volume_added_ml=volume_ml,
             confidence=result.confidence,
             raw_net_change_g=net_change_g,
