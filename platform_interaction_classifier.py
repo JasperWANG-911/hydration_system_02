@@ -214,14 +214,9 @@ class PlatformInteractionClassifier:
 
         if self.current_state == PlatformState.CUP_PRESENT_STABLE:
 
-            if not stable:
-                return InteractionResult(
-                    state=PlatformState.UNSTABLE_MOVEMENT,
-                    confidence=0.70,
-                    metadata={"variance": variance},
-                )
-
-            if stable_weight < self.empty_threshold:
+            # Use raw weight for removal detection so the transition is
+            # immediate rather than waiting for the rolling average to drain.
+            if weight < self.empty_threshold:
                 self.pre_removal_weight = self.last_stable_weight
                 self.removal_timestamp = timestamp
                 self.current_state = PlatformState.WAITING_FOR_RETURN
@@ -229,6 +224,13 @@ class PlatformInteractionClassifier:
                     state=PlatformState.CUP_REMOVED,
                     confidence=0.99,
                     metadata={"pre_removal_weight": self.pre_removal_weight},
+                )
+
+            if not stable:
+                return InteractionResult(
+                    state=PlatformState.UNSTABLE_MOVEMENT,
+                    confidence=0.70,
+                    metadata={"variance": variance},
                 )
 
             self.last_stable_weight = stable_weight
