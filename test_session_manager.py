@@ -2,6 +2,7 @@
 
 import time
 import pytest
+from config import SystemConfig
 from platform_interaction_classifier import InteractionResult, PlatformState
 from session_manager import SessionManager, SessionState
 
@@ -30,12 +31,11 @@ def make_noise_result() -> InteractionResult:
 
 
 @pytest.fixture
-def manager():
-    m = SessionManager(
-        daily_goal_ml=500.0,
-        min_credible_volume_ml=1.0,
-        max_credible_volume_ml=400.0,
-    )
+def manager(config):
+    config.session.default_daily_goal_ml = 500.0
+    config.session.min_credible_volume_ml = 1.0
+    config.session.max_credible_volume_ml = 400.0
+    m = SessionManager(config)
     m.start()
     return m
 
