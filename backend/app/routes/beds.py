@@ -18,6 +18,7 @@ async def bed_view(
     if detail is None:
         raise HTTPException(404, "bed not found")
     return request.app.state.templates.TemplateResponse(
+        request,
         "bed_detail.html",
-        {"request": request, **detail},
+        detail,
     )

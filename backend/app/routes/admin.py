@@ -21,8 +21,9 @@ async def admit_form(
     if bed is None:
         raise HTTPException(404)
     return request.app.state.templates.TemplateResponse(
+        request,
         "admit.html",
-        {"request": request, "bed": bed},
+        {"bed": bed},
     )
 
 

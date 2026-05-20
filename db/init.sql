@@ -1,5 +1,3 @@
-CREATE EXTENSION IF NOT EXISTS timescaledb;
-
 CREATE TABLE beds (
     bed_id   TEXT PRIMARY KEY,
     ward     TEXT NOT NULL,
@@ -40,7 +38,6 @@ CREATE TABLE events (
     PRIMARY KEY (ts, device_id)
 );
 
-SELECT create_hypertable('events', 'ts');
 CREATE INDEX ON events (device_id, ts DESC);
 
 -- Raw load-cell readings (one row per sample sent by the gateway).
@@ -53,7 +50,6 @@ CREATE TABLE measurements (
     PRIMARY KEY (ts, device_id)
 );
 
-SELECT create_hypertable('measurements', 'ts');
 CREATE INDEX ON measurements (device_id, ts DESC);
 
 CREATE TABLE alerts (

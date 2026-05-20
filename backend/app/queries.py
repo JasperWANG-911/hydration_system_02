@@ -181,6 +181,66 @@ async def corridor_ranking(session: AsyncSession, limit: int = 20) -> list[dict]
     return ranked[:limit]
 
 
+async def bed_priorities(session: AsyncSession) -> list[dict]:
+    """Snapshot used by the corridor display.
+
+    One entry per occupied bed (stay open, patient assigned). Priority:
+        1 (red)   — `button` or `no_drink` open alert
+        2 (amber) — `device_offline` or `behind_target` open alert
+        3 (green) — no open alerts
+    Beds without a patient are omitted.
+    """
+    open_alerts_subq = (
+        select(
+            Alert.bed_id.label("bed_id"),
+            func.array_agg(Alert.kind).label("kinds"),
+        )
+        .where(Alert.resolved_at.is_(None))
+        .group_by(Alert.bed_id)
+        .subquery()
+    )
+
+    stmt = (
+        select(
+            Bed.bed_id,
+            Bed.ward,
+            Bed.label,
+            open_alerts_subq.c.kinds,
+        )
+        .select_from(Bed)
+        .join(
+            Stay,
+            and_(Stay.bed_id == Bed.bed_id, Stay.discharged_at.is_(None)),
+        )
+        .join(Patient, Patient.patient_id == Stay.patient_id)
+        .outerjoin(open_alerts_subq, open_alerts_subq.c.bed_id == Bed.bed_id)
+        .order_by(Bed.ward, Bed.bed_id)
+    )
+    rows = await session.execute(stmt)
+
+    p1 = {"button", "no_drink"}
+    p2 = {"device_offline", "behind_target"}
+
+    out: list[dict] = []
+    for bed_id, ward, label, kinds in rows:
+        kinds_set = set(kinds or [])
+        if kinds_set & p1:
+            priority = 1
+        elif kinds_set & p2:
+            priority = 2
+        else:
+            priority = 3
+        out.append(
+            {
+                "bed_id": bed_id,
+                "ward": ward,
+                "label": label,
+                "priority": priority,
+            }
+        )
+    return out
+
+
 async def bed_detail(session: AsyncSession, bed_id: str) -> dict | None:
     bed = await session.get(Bed, bed_id)
     if bed is None:

@@ -9,7 +9,7 @@ import logging
 
 from app.alerts import evaluate_periodic_alerts
 from app.db import SessionLocal
-from app.pubsub import broker
+from app.pubsub import broker, publish_priority_snapshot
 
 log = logging.getLogger(__name__)
 
@@ -20,10 +20,12 @@ async def alert_loop() -> None:
         try:
             async with SessionLocal() as session:
                 raised = await evaluate_periodic_alerts(session)
-            for bed_id, kind in raised:
-                await broker.publish(
-                    {"kind": "alert", "bed_id": bed_id, "alert_kind": kind}
-                )
+                if raised:
+                    for bed_id, kind in raised:
+                        await broker.publish(
+                            {"kind": "alert", "bed_id": bed_id, "alert_kind": kind}
+                        )
+                    await publish_priority_snapshot(session)
         except Exception:
             log.exception("alert evaluation failed")
         await asyncio.sleep(60)

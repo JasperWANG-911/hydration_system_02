@@ -1,98 +1,195 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta http-equiv="refresh" content="30">
-  <title>Hydration — Corridor Display</title>
-  <link rel="stylesheet" href="/static/corridor.css">
+<meta charset="utf-8">
+<title>Bed Priority</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  :root {
+    --bg: #ffffff;
+    --fg: #0b0d10;
+    --muted: #6b7280;
+    --line: #e5e7eb;
+    --p1: #ef4444;
+    --p2: #f59e0b;
+    --p3: #10b981;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; background: var(--bg); color: var(--fg);
+    font: 500 16px/1.3 ui-sans-serif, system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased; }
+
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 1.2vw 2vw; border-bottom: 1px solid var(--line);
+  }
+  header .updated, header .clock {
+    font: 700 3.2vw/1 ui-monospace, "SF Mono", Menlo, monospace;
+    letter-spacing: .02em; color: var(--fg);
+    font-variant-numeric: tabular-nums;
+  }
+
+  main {
+    display: grid; gap: .8vw; padding: 1vw 2vw;
+    grid-template-columns: repeat(auto-fit, minmax(16vw, 1fr));
+    grid-auto-rows: 11vw;
+  }
+  .card {
+    position: relative; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: .4vw;
+    padding: 1vw 1.2vw; border-radius: .6vw; background: #f3f4f6;
+    color: #fff; overflow: hidden; text-align: center;
+    transition: background-color 220ms ease;
+  }
+  .card.p1 { background: var(--p1); }
+  .card.p2 { background: var(--p2); }
+  .card.p3 { background: var(--p3); }
+
+  .card .ward { font-size: 2.2vw; font-weight: 700; letter-spacing: .04em; color: #fff; }
+  .card .bed  { font-size: 3.4vw; font-weight: 800; letter-spacing: -.01em; color: #fff; line-height: 1; }
+  .card.p2 .ward, .card.p2 .bed { color: #1a1206; }
+
+  .empty {
+    grid-column: 1 / -1; padding: 6vw 2vw; text-align: center; color: var(--muted);
+    font-size: 1.4vw;
+  }
+</style>
 </head>
 <body>
-
-<header class="corridor-header">
-  <div class="title">HYDRATION ALERTS</div>
-  <div class="clock" id="clock">--:--</div>
-  <div class="count">
-    <span class="count-num">{{ rows|length }}</span>
-    <span class="count-label">attention</span>
-  </div>
-</header>
-
-{% if rows %}
-<ol class="ranking">
-  {% for r in rows %}
-  {% set pct = (r.intake_ml * 100 / r.intake_target_ml) | round(0, 'floor') | int
-                if r.intake_target_ml else 0 %}
-  <li class="row sev-{{ r.kind }}">
-    <span class="rank">{{ loop.index }}</span>
-    <span class="bed">{{ r.label }}</span>
-    <span class="ward">{{ r.ward }}</span>
-    <span class="patient">{{ r.patient_name or '—' }}</span>
-    <span class="kind kind-{{ r.kind }}">{{ {
-        'button': 'CALL',
-        'no_drink': 'NO DRINK',
-        'device_offline': 'OFFLINE',
-        'behind_target': 'BEHIND',
-    }[r.kind] }}</span>
-    <span class="intake">
-      {% if r.intake_target_ml %}{{ pct }}%{% else %}—{% endif %}
-    </span>
-    <span class="age" data-since="{{ r.raised_at.isoformat() }}">…</span>
-  </li>
-  {% endfor %}
-</ol>
-{% else %}
-<div class="all-clear">
-  <div class="ac-icon">✓</div>
-  <div class="ac-text">ALL BEDS WITHIN RANGE</div>
-</div>
-{% endif %}
-
-<footer class="corridor-footer">
-  Auto-refresh every 30s · last loaded <span id="loaded">now</span>
-</footer>
+  <header>
+    <span id="updated" class="updated">last updated —</span>
+    <span id="clock" class="clock"></span>
+  </header>
+  <main id="grid"><div class="empty">waiting for data…</div></main>
 
 <script>
-  // Live clock
+  // State: bed_id -> {ward, bed, priority}
+  const beds = new Map();
+  const grid = document.getElementById("grid");
+  const updated = document.getElementById("updated");
   const clock = document.getElementById("clock");
+  let lastUpdate = null;
+
   const tick = () => {
     const d = new Date();
-    clock.textContent =
-      String(d.getHours()).padStart(2, "0") + ":" +
-      String(d.getMinutes()).padStart(2, "0") + ":" +
-      String(d.getSeconds()).padStart(2, "0");
+    const pad = (n) => String(n).padStart(2, "0");
+    clock.textContent = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    if (lastUpdate == null) {
+      updated.textContent = "last updated —";
+    } else {
+      const s = Math.floor((Date.now() - lastUpdate) / 1000);
+      updated.textContent =
+        s < 60   ? `last updated ${s} sec ago` :
+        s < 3600 ? `last updated ${Math.floor(s / 60)} min ago` :
+                   `last updated ${Math.floor(s / 3600)} h ago`;
+    }
   };
   tick(); setInterval(tick, 1000);
 
-  // "5m ago" age labels
-  const renderAges = () => {
-    document.querySelectorAll(".age[data-since]").forEach((el) => {
-      const mins = Math.floor((Date.now() - new Date(el.dataset.since)) / 60000);
-      el.textContent =
-        mins < 1 ? "now" :
-        mins < 60 ? mins + "m" :
-        mins < 1440 ? Math.floor(mins / 60) + "h" :
-        Math.floor(mins / 1440) + "d";
+  // Sort: highest priority first, then ward, then bed label
+  const sorted = () =>
+    [...beds.values()].sort((a, b) =>
+      (a.priority - b.priority) || a.ward.localeCompare(b.ward) || a.bed.localeCompare(b.bed)
+    );
+
+  const render = () => {
+    const items = sorted();
+    if (!items.length) {
+      grid.innerHTML = '<div class="empty">waiting for data…</div>';
+      return;
+    }
+    // Diff render: reuse DOM nodes keyed by bed_id
+    const present = new Set();
+    for (const b of items) {
+      present.add(b.id);
+      let el = grid.querySelector(`[data-id="${CSS.escape(b.id)}"]`);
+      if (!el) {
+        el = document.createElement("div");
+        el.dataset.id = b.id;
+        el.innerHTML = `<div class="ward"></div><div class="bed"></div>`;
+        grid.appendChild(el);
+      }
+      el.className = `card p${b.priority}`;
+      el.querySelector(".ward").textContent = b.ward;
+      el.querySelector(".bed").textContent  = b.bed;
+    }
+    // Remove vacated cards + the "empty" placeholder
+    grid.querySelectorAll("[data-id]").forEach((el) => {
+      if (!present.has(el.dataset.id)) el.remove();
+    });
+    grid.querySelectorAll(".empty").forEach((el) => el.remove());
+    // Reorder DOM to match sort
+    items.forEach((b) => grid.appendChild(grid.querySelector(`[data-id="${CSS.escape(b.id)}"]`)));
+  };
+
+  // Accept any of: {bed_id, ward, bed|label, priority}
+  //                {beds: [...]}                  (snapshot)
+  const applyMessage = (msg) => {
+    if (!msg) return;
+    if (Array.isArray(msg.beds)) {
+      beds.clear();
+      for (const b of msg.beds) upsert(b);
+    } else if (msg.bed_id || msg.id) {
+      upsert(msg);
+    } else {
+      return;
+    }
+    lastUpdate = Date.now();
+    render();
+    tick();
+  };
+  const upsert = (b) => {
+    const id = String(b.bed_id ?? b.id ?? "");
+    if (!id) return;
+    const p = Number(b.priority);
+    if (!(p >= 1 && p <= 3)) { beds.delete(id); return; }
+    beds.set(id, {
+      id,
+      ward: String(b.ward ?? ""),
+      bed:  String(b.bed ?? b.label ?? id),
+      priority: p,
     });
   };
-  renderAges(); setInterval(renderAges, 15_000);
 
-  // "loaded" stamp
-  const loadedAt = new Date();
-  setInterval(() => {
-    const s = Math.floor((Date.now() - loadedAt) / 1000);
-    document.getElementById("loaded").textContent =
-      s < 60 ? s + "s ago" : Math.floor(s / 60) + "m ago";
-  }, 1000);
+  // ?mock=1  → run with fake data, no backend needed.
+  const MOCK = new URLSearchParams(location.search).get("mock") === "1";
 
-  // Push-driven refresh (faster than the 30s meta)
-  if (window.EventSource) {
-    const es = new EventSource("/sse");
-    let t;
-    const reload = () => { clearTimeout(t); t = setTimeout(() => location.reload(), 1500); };
-    es.addEventListener("event", reload);
-    es.addEventListener("alert", reload);
+  if (MOCK) {
+    const WARDS = ["ICU-A", "ICU-B", "GEN-C", "GEN-D"];
+    const snapshot = { beds: [] };
+    WARDS.forEach((w, wi) => {
+      const n = 6 + Math.floor(Math.random() * 3);
+      for (let i = 1; i <= n; i++) {
+        snapshot.beds.push({
+          bed_id: `${w}-${String(i).padStart(2, "0")}`,
+          ward: w,
+          bed: `${String.fromCharCode(65 + wi)}${String(i).padStart(2, "0")}`,
+          priority: 1 + Math.floor(Math.random() * 3),
+        });
+      }
+    });
+    applyMessage(snapshot);
+
+    // Every 10s, flip one random bed's priority
+    setInterval(() => {
+      const b = snapshot.beds[Math.floor(Math.random() * snapshot.beds.length)];
+      let p; do { p = 1 + Math.floor(Math.random() * 3); } while (p === b.priority);
+      b.priority = p;
+      applyMessage(b);
+    }, 10_000);
+  } else {
+    // Initial snapshot from backend.
+    fetch("/api/priorities").then(r => r.ok ? r.json() : null).then(applyMessage).catch(() => {});
+
+    // Live updates via SSE — backend publishes a {kind:"priority", beds:[...]}
+    // snapshot whenever an event or alert changes.
+    if (window.EventSource) {
+      const es = new EventSource("/sse");
+      const handle = (e) => { try { applyMessage(JSON.parse(e.data)); } catch {} };
+      es.onmessage = handle;
+      ["priority", "update", "event", "alert"].forEach((t) => es.addEventListener(t, handle));
+    }
   }
 </script>
-
 </body>
 </html>

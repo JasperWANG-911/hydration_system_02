@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: timescale/timescaledb:latest-pg16
+    image: postgres:16-alpine
     environment:
       POSTGRES_USER: hydration
       POSTGRES_PASSWORD: hydration
@@ -15,6 +15,12 @@ services:
     build: ./backend
     environment:
       DATABASE_URL: postgresql+asyncpg://hydration:hydration@postgres:5432/hydration
+    env_file:
+      - .env
+    volumes:
+      # Mount .env read-write so the backend can persist rotated
+      # Camgenium refresh tokens back to the host.
+      - ./.env:/app/.env
     ports:
       - "8000:8000"
     depends_on:

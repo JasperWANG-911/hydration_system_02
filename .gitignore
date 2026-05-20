@@ -16,6 +16,7 @@ env/
 # Local config
 .env
 .env.local
+.access_token.cache
 
 # Claude Code workspace state
 .claude/
