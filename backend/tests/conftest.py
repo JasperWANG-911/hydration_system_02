@@ -1,16 +1,18 @@
 """
 Shared pytest fixtures for the Hydration Monitoring System test suite.
 
-Import these in any test file via standard pytest fixture injection —
-no explicit import of conftest is needed.
+Place this file in the same directory as your test files.
 """
 
-import sys
 import os
+import sys
+
 import pytest
 
-# Make the hydration_system package importable from tests
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+# Ensure the directory containing this file is on the path so that
+# all modules (config, platform_interaction_classifier, etc.) can be
+# imported regardless of where pytest is invoked from.
+sys.path.insert(0, os.path.dirname(__file__))
 
 from app.config import SystemConfig
 from app.patient_profile import BedProfile
@@ -18,9 +20,8 @@ from app.patient_profile import BedProfile
 
 @pytest.fixture
 def config():
-    """Return a default SystemConfig with fast timings for tests."""
+    """Return a SystemConfig with fast alert timings for tests."""
     cfg = SystemConfig()
-    # Speed up alert thresholds so tests don't have to wait 30 minutes
     cfg.alert.no_drink_warning_s = 10.0
     cfg.alert.no_drink_urgent_s = 20.0
     cfg.alert.quiet_hours_start = None
@@ -40,7 +41,7 @@ def bed():
 @pytest.fixture
 def stable_cup_readings():
     """Return a sequence simulating a stable cup on the platform."""
-    return [450.0] * 25
+    return [450.0] * 40
 
 
 @pytest.fixture
@@ -51,8 +52,4 @@ def drink_sequence():
     Cup starts at 450 g, is lifted (0 g), and returns at 380 g —
     a 70 ml drink.
     """
-    return (
-        [450.0] * 25   # stable cup present
-        + [0.0] * 5    # cup lifted
-        + [380.0] * 25 # cup returned, settled
-    )
+    return [450.0] * 40 + [0.0] * 10 + [380.0] * 40

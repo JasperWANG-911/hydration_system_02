@@ -41,8 +41,8 @@ def manager(config):
 
 
 class TestLifecycle:
-    def test_starts_idle(self, config):
-        m = SessionManager(config)
+    def test_starts_idle(self):
+        m = SessionManager()
         assert m.summary().session_state == SessionState.IDLE
 
     def test_start_sets_active(self, manager):
@@ -72,8 +72,8 @@ class TestLifecycle:
         with pytest.raises(RuntimeError):
             manager.start()
 
-    def test_cannot_end_before_start(self, config):
-        m = SessionManager(config)
+    def test_cannot_end_before_start(self):
+        m = SessionManager()
         with pytest.raises(RuntimeError):
             m.end()
 
