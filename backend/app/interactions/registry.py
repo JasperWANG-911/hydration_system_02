@@ -17,6 +17,7 @@ not persisted across restarts — see ARCHITECTURE notes).
 
 from __future__ import annotations
 
+from app.config import SystemConfig
 from app.interactions.classifier import (
     InteractionResult,
     PlatformInteractionClassifier,
@@ -35,10 +36,12 @@ class DeviceRunner:
         self,
         device_id: str,
         daily_goal_ml: float = 2000.0,
+        config: SystemConfig | None = None,
     ) -> None:
         self.device_id = device_id
-        self.classifier = PlatformInteractionClassifier()
-        self.session = SessionManager(daily_goal_ml=daily_goal_ml)
+        cfg = config if config is not None else SystemConfig()
+        self.classifier = PlatformInteractionClassifier(cfg)
+        self.session = SessionManager(cfg, daily_goal_ml=daily_goal_ml)
         self._pending_drinks: list[DrinkEvent] = []
         self._pending_refills: list[RefillEvent] = []
         self._pending_faults: list[InteractionResult] = []

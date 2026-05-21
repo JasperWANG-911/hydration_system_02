@@ -2,6 +2,7 @@
 
 import time
 import pytest
+from app.config import SystemConfig
 from app.interactions.classifier import InteractionResult, PlatformState
 from app.interactions.session import SessionManager, SessionState
 
@@ -30,19 +31,18 @@ def make_noise_result() -> InteractionResult:
 
 
 @pytest.fixture
-def manager():
-    m = SessionManager(
-        daily_goal_ml=500.0,
-        min_credible_volume_ml=1.0,
-        max_credible_volume_ml=400.0,
-    )
+def manager(config):
+    config.session.default_daily_goal_ml = 500.0
+    config.session.min_credible_volume_ml = 1.0
+    config.session.max_credible_volume_ml = 400.0
+    m = SessionManager(config)
     m.start()
     return m
 
 
 class TestLifecycle:
-    def test_starts_idle(self):
-        m = SessionManager()
+    def test_starts_idle(self, config):
+        m = SessionManager(config)
         assert m.summary().session_state == SessionState.IDLE
 
     def test_start_sets_active(self, manager):
@@ -72,8 +72,8 @@ class TestLifecycle:
         with pytest.raises(RuntimeError):
             manager.start()
 
-    def test_cannot_end_before_start(self):
-        m = SessionManager()
+    def test_cannot_end_before_start(self, config):
+        m = SessionManager(config)
         with pytest.raises(RuntimeError):
             m.end()
 

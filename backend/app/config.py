@@ -1,3 +1,4 @@
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -60,3 +61,69 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+# ---------------------------------------------------------------------------
+# Hardware / session configuration (merged from root config.py on main).
+#
+# These dataclasses are passed to SessionManager, PlatformInteractionClassifier,
+# AlertEngine, LedController, ObservationButton, etc. They are independent of
+# the pydantic Settings above, which configures the backend service itself.
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class SensorConfig:
+    sampling_rate_hz: float = 20.0
+    empty_threshold_g: float = 15.0
+    noise_threshold_g: float = 5.0
+    max_valid_weight_g: float = 5000.0
+    stable_variance_threshold: float = 8.0
+    stability_window_size: int = 20
+    absent_timeout_s: float = 300.0
+    meaningful_change_threshold_g: float = 10.0
+
+
+@dataclass
+class SessionConfig:
+    default_daily_goal_ml: float = 2000.0
+    fluid_density_g_per_ml: float = 1.0
+    min_credible_volume_ml: float = 1.0
+    max_credible_volume_ml: float = 500.0
+
+
+@dataclass
+class AlertConfig:
+    no_drink_warning_s: float = 1800.0
+    no_drink_urgent_s: float = 3600.0
+    quiet_hours_start: int | None = 22
+    quiet_hours_end: int | None = 7
+    goal_reached_display_s: float = 10.0
+
+
+@dataclass
+class LedConfig:
+    idle_brightness: float = 0.0
+    reminder_brightness: float = 0.15
+    urgent_brightness: float = 0.25
+    goal_brightness: float = 0.3
+    pulse_period_s: float = 4.0
+    reminder_color: tuple[int, int, int] = field(default_factory=lambda: (255, 220, 180))
+    urgent_color: tuple[int, int, int] = field(default_factory=lambda: (255, 200, 140))
+    goal_color: tuple[int, int, int] = field(default_factory=lambda: (180, 255, 180))
+    idle_color: tuple[int, int, int] = field(default_factory=lambda: (0, 0, 0))
+
+
+@dataclass
+class ButtonConfig:
+    debounce_s: float = 0.3
+    gpio_pin: int = 17
+
+
+@dataclass
+class SystemConfig:
+    sensor: SensorConfig = field(default_factory=SensorConfig)
+    session: SessionConfig = field(default_factory=SessionConfig)
+    alert: AlertConfig = field(default_factory=AlertConfig)
+    led: LedConfig = field(default_factory=LedConfig)
+    button: ButtonConfig = field(default_factory=ButtonConfig)

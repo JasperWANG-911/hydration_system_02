@@ -14,6 +14,8 @@ from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum
 
+from app.config import SensorConfig, SystemConfig
+
 
 class PlatformState(Enum):
     """Enumeration of all possible platform/sensor states."""
@@ -59,44 +61,39 @@ class PlatformInteractionClassifier:
     observe drinking or spilling — only net weight change is
     measurable.
 
+    All thresholds and timing values are read from
+    :class:`config.SensorConfig` so they can be tuned in one place
+    without touching this file.
+
     Typical usage::
 
-        classifier = PlatformInteractionClassifier()
+        config = SystemConfig()
+        classifier = PlatformInteractionClassifier(config)
         while True:
             raw_weight = read_sensor()
             result = classifier.update(raw_weight)
             handle_result(result)
     """
 
-    def __init__(self):
-        # Platform considered empty below this weight (grams)
-        self.empty_threshold = 15
+    def __init__(self, config: SystemConfig):
+        """
+        Args:
+            config: Top-level system configuration. Sensor thresholds
+                are read from ``config.sensor``.
+        """
+        cfg: SensorConfig = config.sensor
 
-        # Fluctuations smaller than this are treated as noise (grams)
-        self.noise_threshold = 5
-
-        # Maximum physically plausible weight reading (grams)
-        self.max_valid_weight = 5000
-
-        # Population variance must be below this for a reading to be
-        # considered stable
-        self.stable_variance_threshold = 8
-
-        # Number of samples required to assess stability
-        self.stability_window_size = 20
-
-        # Seconds before an absent cup triggers a timeout event
-        self.absent_timeout_s = 300
-
-        # Net change smaller than this (grams) is classified as no
-        # meaningful change
-        self.meaningful_change_threshold = 10
+        self._empty_threshold = cfg.empty_threshold_g
+        self._noise_threshold = cfg.noise_threshold_g
+        self._max_valid_weight = cfg.max_valid_weight_g
+        self._stable_variance_threshold = cfg.stable_variance_threshold
+        self._stability_window_size = cfg.stability_window_size
+        self._absent_timeout_s = cfg.absent_timeout_s
+        self._meaningful_change_threshold = cfg.meaningful_change_threshold_g
 
         self.current_state = PlatformState.NO_CUP
 
-        self.weight_buffer: deque = deque(
-            maxlen=self.stability_window_size
-        )
+        self.weight_buffer: deque = deque(maxlen=self._stability_window_size)
 
         self.last_stable_weight: float = 0.0
         self.pre_removal_weight: float | None = None
@@ -135,9 +132,9 @@ class PlatformInteractionClassifier:
         Returns:
             True if the reading is stable, False otherwise.
         """
-        if len(self.weight_buffer) < self.stability_window_size:
+        if len(self.weight_buffer) < self._stability_window_size:
             return False
-        return self._variance() < self.stable_variance_threshold
+        return self._variance() < self._stable_variance_threshold
 
     def _detect_sensor_fault(self, weight: float) -> bool:
         """
@@ -155,7 +152,7 @@ class PlatformInteractionClassifier:
         """
         if weight < -50:
             return True
-        if weight > self.max_valid_weight:
+        if weight > self._max_valid_weight:
             return True
         return False
 
@@ -192,7 +189,7 @@ class PlatformInteractionClassifier:
             )
 
         # Not enough samples yet for reliable inference.
-        if len(self.weight_buffer) < self.stability_window_size:
+        if len(self.weight_buffer) < self._stability_window_size:
             return InteractionResult(
                 state=PlatformState.SENSOR_NOISE,
                 confidence=0.50,
@@ -204,7 +201,7 @@ class PlatformInteractionClassifier:
 
         if self.current_state == PlatformState.NO_CUP:
 
-            if stable and stable_weight > self.empty_threshold:
+            if stable and stable_weight > self._empty_threshold:
                 self.last_stable_weight = stable_weight
                 self.current_state = PlatformState.CUP_PRESENT_STABLE
                 return InteractionResult(
@@ -220,14 +217,9 @@ class PlatformInteractionClassifier:
 
         if self.current_state == PlatformState.CUP_PRESENT_STABLE:
 
-            if not stable:
-                return InteractionResult(
-                    state=PlatformState.UNSTABLE_MOVEMENT,
-                    confidence=0.70,
-                    metadata={"variance": variance},
-                )
-
-            if stable_weight < self.empty_threshold:
+            # Use raw weight for removal detection so the transition is
+            # immediate rather than waiting for the rolling average to drain.
+            if weight < self._empty_threshold:
                 self.pre_removal_weight = self.last_stable_weight
                 self.removal_timestamp = timestamp
                 self.current_state = PlatformState.WAITING_FOR_RETURN
@@ -235,6 +227,13 @@ class PlatformInteractionClassifier:
                     state=PlatformState.CUP_REMOVED,
                     confidence=0.99,
                     metadata={"pre_removal_weight": self.pre_removal_weight},
+                )
+
+            if not stable:
+                return InteractionResult(
+                    state=PlatformState.UNSTABLE_MOVEMENT,
+                    confidence=0.70,
+                    metadata={"variance": variance},
                 )
 
             self.last_stable_weight = stable_weight
@@ -248,7 +247,7 @@ class PlatformInteractionClassifier:
 
             absence_duration = timestamp - self.removal_timestamp
 
-            if absence_duration > self.absent_timeout_s:
+            if absence_duration > self._absent_timeout_s:
                 self.current_state = PlatformState.CUP_ABSENT_TIMEOUT
                 return InteractionResult(
                     state=PlatformState.CUP_ABSENT_TIMEOUT,
@@ -256,10 +255,9 @@ class PlatformInteractionClassifier:
                     metadata={"absence_duration_s": absence_duration},
                 )
 
-            # Use the raw reading rather than the stable average here so
-            # that cup return is detected immediately, without waiting for
-            # the rolling buffer to fully reflect the new weight.
-            if weight > self.empty_threshold:
+            # Use raw weight so cup return is detected immediately,
+            # without waiting for the rolling buffer to catch up.
+            if weight > self._empty_threshold:
                 self.current_state = PlatformState.SETTLING_AFTER_RETURN
                 return InteractionResult(
                     state=PlatformState.CUP_RETURN_DETECTED,
@@ -273,8 +271,8 @@ class PlatformInteractionClassifier:
 
         if self.current_state == PlatformState.SETTLING_AFTER_RETURN:
 
-            # Guard: cup removed again before settling completes
-            if weight < self.empty_threshold:
+            # Guard: cup removed again before settling completes.
+            if weight < self._empty_threshold:
                 self.pre_removal_weight = self.last_stable_weight
                 self.removal_timestamp = timestamp
                 self.current_state = PlatformState.WAITING_FOR_RETURN
@@ -296,7 +294,7 @@ class PlatformInteractionClassifier:
             self.last_stable_weight = stable_weight
             self.current_state = PlatformState.CUP_PRESENT_STABLE
 
-            if abs(net_change) < self.meaningful_change_threshold:
+            if abs(net_change) < self._meaningful_change_threshold:
                 return InteractionResult(
                     state=PlatformState.NO_MEANINGFUL_CHANGE,
                     confidence=0.90,

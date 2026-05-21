@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Callable
 
+from app.config import SessionConfig, SystemConfig
 from app.interactions.classifier import InteractionResult, PlatformState
 
 
@@ -120,31 +121,24 @@ class SessionManager:
 
     def __init__(
         self,
-        daily_goal_ml: float = 2000.0,
-        fluid_density_g_per_ml: float = 1.0,
-        min_credible_volume_ml: float = 1.0,
-        max_credible_volume_ml: float = 500.0,
+        config: SystemConfig,
+        daily_goal_ml: float | None = None,
     ):
         """
         Args:
-            daily_goal_ml: Target fluid intake for the session in ml.
-                Used only for summary/reporting; no internal behaviour
-                changes when the goal is reached.
-            fluid_density_g_per_ml: Density used to convert grams to
-                millilitres. Defaults to 1.0 (water). Adjust for juice,
-                milk, etc.
-            min_credible_volume_ml: Volume changes below this threshold
-                are discarded as noise even if the classifier reported
-                NET_WEIGHT_LOSS. Prevents micro-vibrations from being
-                logged as sips.
-            max_credible_volume_ml: Volume changes above this threshold
-                are clamped and flagged. Guards against sensor spikes
-                being recorded as enormous single drinks.
+            config: Top-level system configuration. Session thresholds
+                are read from ``config.session``.
+            daily_goal_ml: Target fluid intake in ml. Overrides
+                ``config.session.default_daily_goal_ml`` when provided.
+                Pass the patient's personal goal from
+                :class:`patient_profile.PatientProfile` here.
         """
-        self.daily_goal_ml = daily_goal_ml
-        self.fluid_density_g_per_ml = fluid_density_g_per_ml
-        self.min_credible_volume_ml = min_credible_volume_ml
-        self.max_credible_volume_ml = max_credible_volume_ml
+        cfg: SessionConfig = config.session
+
+        self.daily_goal_ml = daily_goal_ml if daily_goal_ml is not None else cfg.default_daily_goal_ml
+        self.fluid_density_g_per_ml = cfg.fluid_density_g_per_ml
+        self.min_credible_volume_ml = cfg.min_credible_volume_ml
+        self.max_credible_volume_ml = cfg.max_credible_volume_ml
 
         self._state = SessionState.IDLE
         self._start_time: float | None = None
