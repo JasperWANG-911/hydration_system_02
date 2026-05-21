@@ -21,8 +21,8 @@ import math
 import time
 from dataclasses import dataclass, field
 
-from app.alert_engine import AlertLevel
-from app.config import LedConfig, SystemConfig
+from alert_engine import AlertLevel
+from config import LedConfig, SystemConfig
 
 
 @dataclass
