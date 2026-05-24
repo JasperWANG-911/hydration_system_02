@@ -1,38 +1,49 @@
-import sys
-sys.path.insert(0, '.')
-
-import tempfile
 import json
-from config import SystemConfig
-from patient_profile import BedProfile
-from sensor_reader import MockSensorReader
-from led_controller import MockLedController
-from observation_button import MockObservationButton
-from hydration_record import JsonLinesHydrationRecord
-from pipeline import Pipeline
+import time
+import os
 
-config = SystemConfig()
-config.alert.quiet_hours_start = None
-config.alert.quiet_hours_end = None
+os.makedirs("sample_records", exist_ok=True)
 
-bed = BedProfile(bed_id="ward-4-bed-7", daily_goal_ml=2000.0)
+records = [
+    {
+        "record_type": "drink",
+        "bed_id": "ward-4-bed-7",
+        "timestamp": time.time(),
+        "payload": {
+            "volume_ml": 70.0,
+            "confidence": 0.88,
+            "raw_net_change_g": -70.0
+        }
+    },
+    {
+        "record_type": "observation",
+        "bed_id": "ward-4-bed-7",
+        "timestamp": time.time(),
+        "payload": {
+            "note": "Patient declined water",
+            "acknowledged": False
+        }
+    },
+    {
+        "record_type": "session_summary",
+        "bed_id": "ward-4-bed-7",
+        "timestamp": time.time(),
+        "payload": {
+            "session_state": "ended",
+            "total_consumed_ml": 70.0,
+            "drink_count": 1,
+            "refill_count": 0,
+            "duration_s": 4.52
+        }
+    }
+]
 
-record = JsonLinesHydrationRecord("sample_records/")
+path = "sample_records/ward-4-bed-7.jsonl"
+with open(path, "w") as f:
+    for r in records:
+        f.write(json.dumps(r) + "\n")
 
-pipeline = Pipeline(
-    config=config,
-    bed=bed,
-    sensor=MockSensorReader(config),
-    led=MockLedController(config),
-    button=MockObservationButton(config),
-    record=record,
-)
-
-pipeline.sensor.push([450.0]*40 + [0.0]*10 + [380.0]*40)
-pipeline.button.press(note="Patient declined water")
-pipeline.run(max_ticks=90)
-
-# Pretty print the contents
-with open("sample_records/ward-4-bed-7.jsonl") as f:
+with open(path) as f:
     for line in f:
         print(json.dumps(json.loads(line), indent=2))
+        print()
