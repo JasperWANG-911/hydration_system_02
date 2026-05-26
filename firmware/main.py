@@ -45,6 +45,12 @@ PACE_REFRESH_MS   = 30 * 60 * 1000  # refresh display every 30 minutes
 # ---- BLE identity --------------------------------------------------------
 DEVICE_NAME = "DRIP-001"        # edit per unit; must be unique per bed
 
+# ---- BLE power management ------------------------------------------------
+# Radio stays on for BLE_ADV_DURATION_MS after each transmission, then
+# stops automatically to save battery.  2 s is enough for the Camgenium
+# relay to pick up the advertisement frame.
+BLE_ADV_DURATION_MS = 2_000
+
 # ---- Debounce ------------------------------------------------------------
 DEBOUNCE_MS = 300
 
@@ -65,6 +71,10 @@ _pending_delta_ml: float = 0.0
 _window_start_ms: int = 0
 _window_open: bool = False
 _press_count: int = 0
+
+# BLE transmit tracking — 0 means radio is idle
+_ble_adv_start_ms: int = 0
+_ble_radio_on: bool = False
 
 # Debounce tracking
 _last_press_ms = [0, 0, 0]  # [plus, minus, sleep]
@@ -119,6 +129,25 @@ def display_wake() -> None:
 # Aggregation window
 # ---------------------------------------------------------------------------
 
+def _ble_transmit_intake(volume_ml: float, ts_ms: int) -> None:
+    """Transmit an intake event and arm the auto-stop timer."""
+    global _ble_adv_start_ms, _ble_radio_on
+    ble.transmit_intake(volume_ml, ts_ms)
+    _ble_adv_start_ms = time.ticks_ms()
+    _ble_radio_on = True
+
+
+def _ble_transmit_sleep(sleeping: bool, ts_ms: int) -> None:
+    """Transmit a sleep toggle event and arm the auto-stop timer."""
+    global _ble_adv_start_ms, _ble_radio_on
+    if sleeping:
+        ble.transmit_sleep_start(ts_ms)
+    else:
+        ble.transmit_sleep_end(ts_ms)
+    _ble_adv_start_ms = time.ticks_ms()
+    _ble_radio_on = True
+
+
 def _maybe_commit(now_ms: int) -> None:
     global _pending_delta_ml, _window_open, _press_count, _total_ml
     if not _window_open:
@@ -127,7 +156,7 @@ def _maybe_commit(now_ms: int) -> None:
         return
     if _pending_delta_ml > 0:
         _total_ml += _pending_delta_ml
-        ble.transmit_intake(_pending_delta_ml, _window_start_ms)
+        _ble_transmit_intake(_pending_delta_ml, _window_start_ms)
     _pending_delta_ml = 0.0
     _window_open = False
     _press_count = 0
@@ -139,7 +168,7 @@ def _force_commit(now_ms: int) -> None:
         return
     if _pending_delta_ml > 0:
         _total_ml += _pending_delta_ml
-        ble.transmit_intake(_pending_delta_ml, _window_start_ms)
+        _ble_transmit_intake(_pending_delta_ml, _window_start_ms)
     _pending_delta_ml = 0.0
     _window_open = False
     _press_count = 0
@@ -178,13 +207,13 @@ def _toggle_sleep(now_ms: int) -> None:
         _in_pause = True
         _pause_start_ms = now_ms
         display_dim()
-        ble.transmit_sleep_start(now_ms)
+        _ble_transmit_sleep(True, now_ms)
     else:
         if _in_pause:
             _total_paused_ms += time.ticks_diff(now_ms, _pause_start_ms)
             _in_pause = False
         display_wake()
-        ble.transmit_sleep_end(now_ms)
+        _ble_transmit_sleep(False, now_ms)
         display_update(_total_ml, _expected_ml())
 
 
@@ -247,6 +276,13 @@ def main() -> None:
 
         # Commit aggregation window if it has expired.
         _maybe_commit(now_ms)
+
+        # Auto-stop BLE radio after BLE_ADV_DURATION_MS to save battery.
+        # The Camgenium relay has had ample time to capture the frame.
+        global _ble_radio_on
+        if _ble_radio_on and time.ticks_diff(now_ms, _ble_adv_start_ms) >= BLE_ADV_DURATION_MS:
+            ble.stop()
+            _ble_radio_on = False
 
         # Refresh pace display on schedule.
         if time.ticks_diff(now_ms, last_pace_refresh_ms) >= PACE_REFRESH_MS:

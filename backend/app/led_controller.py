@@ -1,14 +1,21 @@
 """
-Cactus LED Controller for the Hydration Monitoring System.
+Cactus LED Controller for the DRIP Hydration Monitoring System.
 
 Translates an :class:`alert_engine.AlertLevel` into a gentle breathing
-pulse on the cactus LED. The LED is intentionally unobtrusive — low
-brightness, warm white tones, slow pulse cycles — so it reads as a
-friendly ambient indicator rather than a clinical alarm.
+pulse on the cactus LED (patient-facing, back of device) and the corridor
+indicator strip (front/top edge). Both are wired in parallel to the same
+GPIO pin so they always show the same state.
+
+Two states for now:
+  IDLE     — LED off; patient is on track.
+  REMINDER — slow amber breathing pulse; patient needs attention.
+
+A third priority tier (higher-urgency colour or faster pulse) is
+reserved for a future release.
 
 Hardware integration
 --------------------
-:class:`RgbLedController` is a stub. Replace the bodies of
+:class:`RgbLedController` is a stub. Replace the body of
 :meth:`_set_color` with real PWM or NeoPixel calls.
 Search for ``# HARDWARE`` comments for the exact lines to change.
 
@@ -21,8 +28,8 @@ import math
 import time
 from dataclasses import dataclass, field
 
-from alert_engine import AlertLevel
-from config import LedConfig, SystemConfig
+from app.alert_engine import AlertLevel
+from app.config import LedConfig, SystemConfig
 
 
 @dataclass
@@ -44,28 +51,14 @@ class LedState:
 
 
 class LedController(abc.ABC):
-    """
-    Abstract base class for cactus LED drivers.
-
-    Subclass this to add support for a different LED type (NeoPixel,
-    simple PWM RGB, single-colour LED, etc.). The alert engine and
-    pipeline only call :meth:`apply` and :meth:`off`.
-    """
+    """Abstract base class for cactus LED drivers."""
 
     def __init__(self, config: SystemConfig):
         self._config: LedConfig = config.led
 
     @abc.abstractmethod
     def apply(self, level: AlertLevel) -> None:
-        """
-        Apply the visual state corresponding to an alert level.
-
-        This method is called on every pipeline tick. Implementations
-        should be non-blocking — do not sleep inside this method.
-
-        Args:
-            level: The current :class:`AlertLevel` from the alert engine.
-        """
+        """Apply the visual state corresponding to an alert level."""
 
     @abc.abstractmethod
     def off(self) -> None:
@@ -74,16 +67,14 @@ class LedController(abc.ABC):
 
 class RgbLedController(LedController):
     """
-    RGB LED driver for a single NeoPixel or PWM RGB LED on the Pi.
+    RGB LED driver for a NeoPixel or PWM RGB LED wired to a single GPIO.
 
-    Produces a slow sinusoidal breathing effect whose colour and peak
-    brightness depend on the current alert level. The breathing cycle
-    uses a sine wave so the transition feels organic rather than stepped.
+    Produces a slow sinusoidal breathing effect. The colour and peak
+    brightness are fixed (amber) for REMINDER; the LED is off for IDLE.
+    The breathing cycle uses a sine wave so the transition feels organic.
 
-    The LED stays off (``IDLE``) while the patient is drinking regularly
-    and during quiet hours. It pulses a warm white at low brightness for
-    ``REMINDER``, slightly brighter for ``URGENT``, and a soft green
-    briefly for ``GOAL_REACHED``.
+    Both the patient-facing cactus LED and the corridor strip are wired
+    in parallel to the same pin — they always behave identically.
     """
 
     def __init__(self, config: SystemConfig, pin: int):
@@ -91,8 +82,6 @@ class RgbLedController(LedController):
         Args:
             config: System configuration.
             pin: GPIO pin number (BCM) connected to the LED data line.
-                For a NeoPixel strip this is the data pin.
-                For a PWM RGB LED this should be the shared PWM pin.
         """
         super().__init__(config)
         self._pin = pin
@@ -103,15 +92,15 @@ class RgbLedController(LedController):
     def _setup_hardware(self) -> None:
         # HARDWARE: Initialise your LED library here. Examples:
         #
-        # NeoPixel (single pixel):
+        # NeoPixel (single pixel or short strip):
         #   import board, neopixel
         #   self._pixel = neopixel.NeoPixel(board.D18, 1, brightness=1.0,
         #                                    auto_write=False)
         #
-        # RPi PWM RGB (common cathode, three pins):
+        # RPi PWM RGB (common cathode, three pins — amber uses R+G only):
         #   import RPi.GPIO as GPIO
         #   GPIO.setmode(GPIO.BCM)
-        #   GPIO.setup([self._pin, ...], GPIO.OUT)
+        #   GPIO.setup([RED_PIN, GREEN_PIN, BLUE_PIN], GPIO.OUT)
         #   self._pwm_r = GPIO.PWM(RED_PIN, 1000)
         #   self._pwm_g = GPIO.PWM(GREEN_PIN, 1000)
         #   self._pwm_b = GPIO.PWM(BLUE_PIN, 1000)
@@ -136,29 +125,16 @@ class RgbLedController(LedController):
             self._set_color((0, 0, 0), 0.0)
             return
 
-        color, peak_brightness = self._level_params(level)
-        brightness = self._breathing_brightness(peak_brightness)
-        self._set_color(color, brightness)
+        # REMINDER (and future tiers) → amber breathing pulse.
+        brightness = self._breathing_brightness(self._config.reminder_brightness)
+        self._set_color(self._config.reminder_color, brightness)
 
     def off(self) -> None:
         """Turn the LED off immediately."""
         self._set_color((0, 0, 0), 0.0)
 
-    def _level_params(
-        self, level: AlertLevel
-    ) -> tuple[tuple[int, int, int], float]:
-        cfg = self._config
-        if level == AlertLevel.REMINDER:
-            return cfg.reminder_color, cfg.reminder_brightness
-        if level == AlertLevel.URGENT:
-            return cfg.urgent_color, cfg.urgent_brightness
-        if level == AlertLevel.GOAL_REACHED:
-            return cfg.goal_color, cfg.goal_brightness
-        return cfg.idle_color, cfg.idle_brightness
-
     def _breathing_brightness(self, peak: float) -> float:
-        # Sine wave oscillates between 0 and peak over pulse_period_s.
-        # Using (sin + 1) / 2 maps the -1..1 sine range to 0..1.
+        """Sine wave that oscillates between 0 and ``peak`` over ``pulse_period_s``."""
         elapsed = time.time() - self._cycle_start
         phase = (elapsed % self._config.pulse_period_s) / self._config.pulse_period_s
         return peak * (math.sin(2 * math.pi * phase - math.pi / 2) + 1) / 2
@@ -199,7 +175,10 @@ class MockLedController(LedController):
         self._history: list[LedState] = []
 
     def apply(self, level: AlertLevel) -> None:
-        color, brightness = self._resolve(level)
+        if level == AlertLevel.IDLE:
+            color, brightness = self._config.idle_color, self._config.idle_brightness
+        else:
+            color, brightness = self._config.reminder_color, self._config.reminder_brightness
         self._history.append(
             LedState(
                 level=level,
@@ -220,32 +199,9 @@ class MockLedController(LedController):
         )
 
     def last_state(self) -> LedState | None:
-        """
-        Return the most recently applied LED state, or None.
-
-        Returns:
-            The last :class:`LedState` recorded, or None if ``apply``
-            has never been called.
-        """
+        """Return the most recently applied LED state, or None."""
         return self._history[-1] if self._history else None
 
     def history(self) -> list[LedState]:
-        """
-        Return a copy of the full LED state history.
-
-        Returns:
-            List of :class:`LedState` instances in chronological order.
-        """
+        """Return a copy of the full LED state history."""
         return list(self._history)
-
-    def _resolve(
-        self, level: AlertLevel
-    ) -> tuple[tuple[int, int, int], float]:
-        cfg = self._config
-        mapping = {
-            AlertLevel.IDLE: (cfg.idle_color, cfg.idle_brightness),
-            AlertLevel.REMINDER: (cfg.reminder_color, cfg.reminder_brightness),
-            AlertLevel.URGENT: (cfg.urgent_color, cfg.urgent_brightness),
-            AlertLevel.GOAL_REACHED: (cfg.goal_color, cfg.goal_brightness),
-        }
-        return mapping.get(level, (cfg.idle_color, cfg.idle_brightness))

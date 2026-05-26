@@ -72,6 +72,24 @@ class BleTransport:
         """Broadcast a sleep-end (wake) event."""
         self._advertise(EVT_SLEEP_END, 0, ts_ms)
 
+    def stop(self) -> None:
+        """Stop advertising and power down the radio.
+
+        Call this ~2 seconds after :meth:`transmit_intake` /
+        :meth:`transmit_sleep_start` / :meth:`transmit_sleep_end` to
+        keep the radio on only long enough for the Camgenium relay to
+        pick up the frame, then cut power to extend battery life.
+        """
+        if self._ble is None:
+            print("[BLE] stop() — no hardware")
+            return
+        # HARDWARE: Disable advertising and deactivate the radio.
+        #
+        #   self._ble.gap_advertise(None)   # None interval = stop advertising
+        #   # Optionally power down:
+        #   # self._ble.active(False)
+        pass
+
     def _advertise(self, event_type: int, volume_ml: int, ts_ms: int) -> None:
         frame = struct.pack(
             "<BHI",

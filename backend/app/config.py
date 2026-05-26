@@ -82,13 +82,12 @@ class AlertConfig:
 @dataclass
 class LedConfig:
     idle_brightness: float = 0.0
-    reminder_brightness: float = 0.15
-    urgent_brightness: float = 0.25
-    goal_brightness: float = 0.3
+    # REMINDER and the future URGENT tier both use the same amber colour;
+    # brightness will differentiate them when the third state is added.
+    reminder_brightness: float = 0.20
     pulse_period_s: float = 4.0
-    reminder_color: tuple[int, int, int] = field(default_factory=lambda: (255, 220, 180))
-    urgent_color: tuple[int, int, int] = field(default_factory=lambda: (255, 200, 140))
-    goal_color: tuple[int, int, int] = field(default_factory=lambda: (180, 255, 180))
+    # Amber (255, 165, 0) — warm, visible but not clinical / alarming.
+    reminder_color: tuple[int, int, int] = field(default_factory=lambda: (255, 165, 0))
     idle_color: tuple[int, int, int] = field(default_factory=lambda: (0, 0, 0))
 
 

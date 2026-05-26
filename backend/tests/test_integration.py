@@ -42,16 +42,15 @@ class TestButtonIntakeFlow:
     def test_single_plus_press_records_drink(self, mock_pipeline, config, tmp_path):
         pipeline = mock_pipeline
         pipeline._session.start()
+        # Press in the past so the aggregation window is already expired
+        # by the time drain_intake() calls time.time().
         t = time.time() - config.button.aggregation_window_s - 1
 
         pipeline.buttons.press_plus(now=t)
-        pipeline.buttons.drain_intake()  # simulate window expiry by draining
-
-        # Force commit by pressing plus far in future
-        pipeline.buttons.press_plus(now=t + config.button.aggregation_window_s + 1)
+        # drain_intake() evaluates the window lazily; since t is in the past
+        # the window is already expired → event is committed immediately.
         events = pipeline.buttons.drain_intake()
 
-        # First window: 50 ml
         assert len(events) >= 1
         assert events[0].volume_ml == pytest.approx(50.0)
 

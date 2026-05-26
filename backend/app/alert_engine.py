@@ -21,15 +21,17 @@ from app.interactions.session import SessionSummary
 
 class AlertLevel(Enum):
     """
-    System-wide alert level, from no action required to urgent.
+    System-wide alert level.
 
-    Values are ordered by severity — higher ordinal = more urgent.
+    Two active states for now; a third priority tier is reserved for a
+    future release.
+
+    IDLE     — patient is on track; LED off.
+    REMINDER — patient needs attention; LED on (amber breathing pulse).
     """
 
     IDLE = "idle"
-    GOAL_REACHED = "goal_reached"
     REMINDER = "reminder"
-    URGENT = "urgent"
 
 
 @dataclass
@@ -116,20 +118,21 @@ class AlertEngine:
         goal_progress: float,
         in_quiet_hours: bool,
     ) -> AlertLevel:
+        # Goal reached → patient is fine; LED stays off.
         if goal_progress >= 1.0:
-            return AlertLevel.GOAL_REACHED
+            return AlertLevel.IDLE
 
-        # No drink recorded yet — treat as if the full warning window has
-        # elapsed to give an immediate gentle reminder on startup.
+        # No drink recorded yet → immediate gentle reminder (suppressed
+        # during quiet hours so the LED doesn't disturb sleeping patients).
         if time_since_drink is None:
-            if in_quiet_hours:
-                return AlertLevel.IDLE
-            return AlertLevel.REMINDER
+            return AlertLevel.IDLE if in_quiet_hours else AlertLevel.REMINDER
 
+        # Both warning and urgent thresholds map to REMINDER for now.
+        # The urgent tier will be exposed as a separate visual state in a
+        # later release; for now a single amber pulse covers both cases.
         if time_since_drink >= self._config.no_drink_urgent_s:
-            # Urgent overrides quiet hours — a very long absence warrants
-            # a gentle light even overnight.
-            return AlertLevel.URGENT
+            # Long absence overrides quiet hours.
+            return AlertLevel.REMINDER
 
         if in_quiet_hours:
             return AlertLevel.IDLE

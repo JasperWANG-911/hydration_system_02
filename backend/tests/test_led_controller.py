@@ -27,7 +27,7 @@ class TestMockLedController:
     def test_history_grows_with_each_apply(self, led):
         led.apply(AlertLevel.IDLE)
         led.apply(AlertLevel.REMINDER)
-        led.apply(AlertLevel.URGENT)
+        led.apply(AlertLevel.REMINDER)
         assert len(led.history()) == 3
 
     def test_history_returns_copy(self, led):
@@ -36,14 +36,10 @@ class TestMockLedController:
         h.clear()
         assert len(led.history()) == 1
 
-    def test_reminder_brightness_lower_than_urgent(self, led, config):
+    def test_reminder_brightness_above_zero(self, led, config):
+        """REMINDER state has positive brightness; IDLE is zero."""
         led.apply(AlertLevel.REMINDER)
-        reminder_brightness = led.last_state().brightness
-
-        led.apply(AlertLevel.URGENT)
-        urgent_brightness = led.last_state().brightness
-
-        assert reminder_brightness < urgent_brightness
+        assert led.last_state().brightness > 0.0
 
     def test_idle_brightness_is_zero(self, led):
         led.apply(AlertLevel.IDLE)

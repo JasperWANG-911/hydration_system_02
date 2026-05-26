@@ -41,21 +41,23 @@ class TestAlertLevels:
         state = engine.evaluate(summary)
         assert state.level == AlertLevel.REMINDER
 
-    def test_urgent_after_urgent_threshold(self, engine, config):
+    def test_reminder_after_urgent_threshold(self, engine, config):
+        """Urgent threshold also maps to REMINDER (single LED state for now)."""
         t = time.time() - config.alert.no_drink_urgent_s - 1
         summary = make_summary(last_drink_time=t)
         state = engine.evaluate(summary)
-        assert state.level == AlertLevel.URGENT
+        assert state.level == AlertLevel.REMINDER
 
     def test_reminder_when_no_drink_ever_recorded(self, engine):
         summary = make_summary(last_drink_time=None)
         state = engine.evaluate(summary)
         assert state.level == AlertLevel.REMINDER
 
-    def test_goal_reached_when_fully_consumed(self, engine):
+    def test_idle_when_goal_reached(self, engine):
+        """Goal reached → LED off (IDLE), not a separate visual state."""
         summary = make_summary(total_consumed_ml=DAILY_GOAL_ML)
         state = engine.evaluate(summary)
-        assert state.level == AlertLevel.GOAL_REACHED
+        assert state.level == AlertLevel.IDLE
 
 
 class TestQuietHours:
@@ -68,14 +70,15 @@ class TestQuietHours:
         state = engine.evaluate(summary)
         assert state.level == AlertLevel.IDLE
 
-    def test_urgent_not_suppressed_during_quiet_hours(self, config):
+    def test_reminder_not_suppressed_past_urgent_threshold_during_quiet_hours(self, config):
+        """Very long absence still fires REMINDER even during quiet hours."""
         config.alert.quiet_hours_start = 0
         config.alert.quiet_hours_end = 23
         engine = AlertEngine(config, daily_goal_ml=DAILY_GOAL_ML)
         t = time.time() - config.alert.no_drink_urgent_s - 1
         summary = make_summary(last_drink_time=t)
         state = engine.evaluate(summary)
-        assert state.level == AlertLevel.URGENT
+        assert state.level == AlertLevel.REMINDER
 
     def test_no_quiet_hours_when_disabled(self, config):
         engine = AlertEngine(config, daily_goal_ml=DAILY_GOAL_ML)
