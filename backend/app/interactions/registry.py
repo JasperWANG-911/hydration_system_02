@@ -1,36 +1,25 @@
 """Per-device runner registry.
 
-The ingest route handles samples from many devices concurrently. Each
-device needs its own classifier state (the platform state machine is
-stateful: it remembers `pre_removal_weight`, `last_stable_weight`, etc.)
-and its own session aggregator (counting drinks toward a daily goal).
-
-`DeviceRunner` bundles one classifier + one session for a given device,
-pre-registers callbacks that buffer drink/refill events in a local list,
-and exposes :meth:`drain` so the caller can pull those events out and
-persist them to the database.
+The ingest route handles events from many devices concurrently. Each
+device needs its own session state (accumulating drinks toward a daily
+goal). `DeviceRunner` bundles one session for a given device, registers
+callbacks that buffer drink events in a local list, and exposes
+:meth:`drain` so the caller can pull those events out and persist them
+to the database.
 
 `DeviceRegistry` keeps a map of device_id → runner. Runners are created
-lazily on first sample; they live for the process lifetime (state is
-not persisted across restarts — see ARCHITECTURE notes).
+lazily on first event; they live for the process lifetime (state is
+not persisted across restarts).
 """
 
 from __future__ import annotations
 
 from app.config import SystemConfig
-from app.interactions.classifier import (
-    InteractionResult,
-    PlatformInteractionClassifier,
-)
-from app.interactions.session import (
-    DrinkEvent,
-    RefillEvent,
-    SessionManager,
-)
+from app.interactions.session import DrinkEvent, SessionManager
 
 
 class DeviceRunner:
-    """One classifier + one session for a single device."""
+    """One session for a single device."""
 
     def __init__(
         self,
@@ -40,33 +29,20 @@ class DeviceRunner:
     ) -> None:
         self.device_id = device_id
         cfg = config if config is not None else SystemConfig()
-        self.classifier = PlatformInteractionClassifier(cfg)
         self.session = SessionManager(cfg, daily_goal_ml=daily_goal_ml)
         self._pending_drinks: list[DrinkEvent] = []
-        self._pending_refills: list[RefillEvent] = []
-        self._pending_faults: list[InteractionResult] = []
         self.session.on_drink(self._pending_drinks.append)
-        self.session.on_refill(self._pending_refills.append)
-        self.session.on_fault(self._pending_faults.append)
         self.session.start()
 
-    def process_sample(self, weight_g: float, ts: float) -> InteractionResult:
-        """Feed one raw weight reading through classifier + session."""
-        result = self.classifier.update(weight_g, now_ts=ts)
-        self.session.process(result, now_ts=ts)
-        return result
+    def record_intake(self, volume_ml: float, ts: float) -> None:
+        """Record one button-confirmed intake event."""
+        self.session.record_intake(volume_ml, now_ts=ts)
 
-    def drain(
-        self,
-    ) -> tuple[list[DrinkEvent], list[RefillEvent], list[InteractionResult]]:
-        """Return — and clear — all buffered drink / refill / fault events."""
+    def drain(self) -> list[DrinkEvent]:
+        """Return — and clear — all buffered drink events."""
         drinks = self._pending_drinks
-        refills = self._pending_refills
-        faults = self._pending_faults
         self._pending_drinks = []
-        self._pending_refills = []
-        self._pending_faults = []
-        return drinks, refills, faults
+        return drinks
 
 
 class DeviceRegistry:

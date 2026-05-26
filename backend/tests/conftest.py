@@ -1,17 +1,10 @@
-"""
-Shared pytest fixtures for the Hydration Monitoring System test suite.
-
-Place this file in the same directory as your test files.
-"""
+"""Shared pytest fixtures for the DRIP test suite."""
 
 import os
 import sys
 
 import pytest
 
-# Ensure the directory containing this file is on the path so that
-# all modules (config, platform_interaction_classifier, etc.) can be
-# imported regardless of where pytest is invoked from.
 sys.path.insert(0, os.path.dirname(__file__))
 
 from app.config import SystemConfig
@@ -26,6 +19,7 @@ def config():
     cfg.alert.no_drink_urgent_s = 20.0
     cfg.alert.quiet_hours_start = None
     cfg.alert.quiet_hours_end = None
+    cfg.button.aggregation_window_s = 0.5  # short window so tests don't wait 15s
     return cfg
 
 
@@ -34,22 +28,5 @@ def bed():
     """Return a minimal BedProfile for testing."""
     return BedProfile(
         bed_id="test-ward-bed-01",
-        daily_goal_ml=500.0,
+        daily_goal_ml=1000.0,
     )
-
-
-@pytest.fixture
-def stable_cup_readings():
-    """Return a sequence simulating a stable cup on the platform."""
-    return [450.0] * 40
-
-
-@pytest.fixture
-def drink_sequence():
-    """
-    Return a weight sequence simulating a cup lift, drink, and return.
-
-    Cup starts at 450 g, is lifted (0 g), and returns at 380 g —
-    a 70 ml drink.
-    """
-    return [450.0] * 40 + [0.0] * 10 + [380.0] * 40

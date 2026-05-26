@@ -1,29 +1,27 @@
-"""Pretend to be a Pico over BLE — connect to the phone running Pico
-Relay and write filler bytes into the GATT characteristic so Camgenium
-sees 'data' from this agent and (hopefully) auto-creates an instrument
-on its side.
+"""Simulate a DRIP Pico W advertising BLE events over the Camgenium relay.
 
-We deliberately don't care about the on-the-wire frame format at this
-stage. The goal here is just:
+Connects to the phone running Pico Relay via BLE (using bleak), then
+writes DRIP-formatted frames into the writable GATT characteristic.
+The Camgenium relay should pick these up and forward them to the backend
+webhook as base64-encoded ``dataValue`` fields.
 
-    1. Confirm the phone accepts writes from a BLE central.
-    2. Trigger whatever instrument-registration flow Camgenium has, so
-       we can grab a real instrument ID and subscribe to it via webhook.
+Frame format (7 bytes, little-endian) — matches firmware/ble_transport.py:
+    byte  0:   event type  (0x01=intake, 0x02=sleep_start, 0x03=sleep_end)
+    bytes 1-2: volume_ml   (uint16)
+    bytes 3-6: ts_ms       (uint32, milliseconds since epoch mod 2^32)
 
-Real frame layout comes later, once we know the BLE characteristic +
-Pico SDK contract.
+Usage::
 
-Requires:  pip install bleak
-
-Usage:
-    # Make sure on the phone:
-    #   - Pico Relay is open
-    #   - NBA Status is "Connected" (green dot)
-    #   - You've tapped Start under "BLE Peripheral" so the device is
-    #     advertising as 'L2S2R-...'
+    # On the phone: open Pico Relay, tap Start under BLE Peripheral.
     python scripts/fake_pico_ble.py
+
+Requires::
+
+    pip install bleak
 """
+
 import asyncio
+import random
 import struct
 import sys
 import time
@@ -32,25 +30,33 @@ from bleak import BleakClient, BleakScanner
 
 DEVICE_NAME_PREFIX = "L2S2R-"
 SERVICE_UUID = "8a3e4d2f-1b6c-4f9e-a7d8-3e5b2c1f4a01"
-MTU_BYTES = 16
-SAMPLE_INTERVAL_S = 1.0
+
+# Event type codes — keep in sync with firmware/ble_transport.py
+EVT_INTAKE      = 0x01
+EVT_SLEEP_START = 0x02
+EVT_SLEEP_END   = 0x03
+
+STEP_ML = 50
+DRINK_INTERVAL_S = 1800  # simulate a drink every 30 min
 
 
-async def find_phone():
+def _build_frame(event_type: int, volume_ml: int) -> bytes:
+    ts_ms = int(time.time() * 1000) & 0xFFFFFFFF
+    return struct.pack("<BHI", event_type, volume_ml & 0xFFFF, ts_ms)
+
+
+async def find_relay():
     print(f"scanning 10s for BLE peripheral starting with '{DEVICE_NAME_PREFIX}'...")
     devices = await BleakScanner.discover(timeout=10.0)
     candidates = [
         d for d in devices if d.name and d.name.startswith(DEVICE_NAME_PREFIX)
     ]
     if not candidates:
-        print()
-        print("nothing matched. checklist:")
+        print("\nnothing matched. checklist:")
         print("  - phone screen on and unlocked")
         print("  - Pico Relay open, BLE Peripheral 'started' (tapped Start)")
         print("  - this laptop's bluetooth is on")
-        print("  - (mac) terminal has Bluetooth permission in System Settings")
-        print()
-        print("scan saw these BLE devices:")
+        print("\nscan saw these BLE devices:")
         for d in devices:
             print(f"  {d.name or '<no name>'}  {d.address}")
         sys.exit(1)
@@ -62,10 +68,7 @@ async def find_phone():
 
 
 def pick_writable_char(client):
-    """Find any characteristic on SERVICE_UUID that we can write to."""
-    print()
-    print("services discovered on peripheral:")
-    target = None
+    print("\nservices discovered on peripheral:")
     target_char = None
     for service in client.services:
         print(f"  service {service.uuid}")
@@ -74,50 +77,53 @@ def pick_writable_char(client):
             if service.uuid.lower() == SERVICE_UUID.lower():
                 if "write" in char.properties or "write-without-response" in char.properties:
                     if target_char is None:
-                        target = service
                         target_char = char
     print()
     if target_char is None:
-        raise RuntimeError(
-            f"no writable characteristic under service {SERVICE_UUID}"
-        )
-    print(
-        f"will write to service={target.uuid}  char={target_char.uuid}  "
-        f"props={target_char.properties}"
-    )
+        raise RuntimeError(f"no writable characteristic under service {SERVICE_UUID}")
+    print(f"will write to char={target_char.uuid}  props={target_char.properties}")
     return target_char
 
 
 async def push():
-    phone = await find_phone()
+    relay = await find_relay()
     print("connecting...")
-    async with BleakClient(phone) as client:
+    async with BleakClient(relay) as client:
         char = pick_writable_char(client)
-        # Use write-with-response (ack-based). On macOS,
-        # write-without-response is unreliable: writes succeed locally
-        # but may be silently dropped before reaching the peripheral.
         use_response = "write" in char.properties
-        print(f"write mode: response={use_response}")
-        i = 0
+        print(f"write mode: response={use_response}\n")
+
+        event_count = 0
         while True:
-            # Arbitrary 16-byte filler. The first 2 bytes are a counter
-            # so we can verify on the phone side that bytes are arriving;
-            # the rest is a timestamp + zeros. Real frame format is TBD.
-            payload = struct.pack(
-                "<HHIQ",
-                i & 0xFFFF,
-                0x4242,
-                int(time.time()),
-                0,
-            )[:MTU_BYTES]
+            # Simulate a drink: 2-5 presses worth
+            presses = random.randint(2, 5)
+            volume_ml = presses * STEP_ML
+            frame = _build_frame(EVT_INTAKE, volume_ml)
+
             try:
-                await client.write_gatt_char(char, payload, response=use_response)
+                await client.write_gatt_char(char, frame, response=use_response)
             except Exception as e:
-                print(f"write failed at frame {i}: {e}")
+                print(f"write failed at event {event_count}: {e}")
                 break
-            print(f"sent frame {i:>4}  ({len(payload)} bytes)  ack={use_response}")
-            i += 1
-            await asyncio.sleep(SAMPLE_INTERVAL_S)
+
+            print(
+                f"[{event_count:>4}] intake  {volume_ml:>4} ml  "
+                f"frame={frame.hex()}  ack={use_response}"
+            )
+            event_count += 1
+
+            # Occasionally simulate a sleep toggle
+            if random.random() < 0.05:
+                sleep_frame = _build_frame(EVT_SLEEP_START, 0)
+                await client.write_gatt_char(char, sleep_frame, response=use_response)
+                print(f"[{event_count:>4}] sleep_start  frame={sleep_frame.hex()}")
+                await asyncio.sleep(5)
+                wake_frame = _build_frame(EVT_SLEEP_END, 0)
+                await client.write_gatt_char(char, wake_frame, response=use_response)
+                print(f"[{event_count:>4}] sleep_end    frame={wake_frame.hex()}")
+                event_count += 2
+
+            await asyncio.sleep(DRINK_INTERVAL_S + random.uniform(-60, 60))
 
 
 if __name__ == "__main__":

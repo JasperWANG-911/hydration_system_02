@@ -1,14 +1,14 @@
 """
-Alert Engine for the Hydration Monitoring System.
+Alert Engine for the DRIP Hydration Monitoring System.
 
-Watches the session summary and button observations, then decides what
-alert level the system should be in. The engine itself does not drive
-the LED or send notifications — it produces an :class:`AlertLevel` that
-the LED controller and notification layer consume.
+Watches the session summary and decides what alert level the system
+should be in. The engine itself does not drive the LED or send
+notifications — it produces an :class:`AlertLevel` that the LED
+controller and notification layer consume.
 
 This separation means the alert logic can be tested independently of
-any hardware, and the same engine can drive both a physical LED and a
-web dashboard without modification.
+any hardware, and the same engine can drive both the physical cactus
+LED and the web dashboard without modification.
 """
 
 import time
@@ -24,7 +24,6 @@ class AlertLevel(Enum):
     System-wide alert level, from no action required to urgent.
 
     Values are ordered by severity — higher ordinal = more urgent.
-    Consumers can compare levels with ``>=`` for threshold checks.
     """
 
     IDLE = "idle"
@@ -43,15 +42,12 @@ class AlertState:
         time_since_last_drink_s: Seconds elapsed since the most recent
             drink event, or None if no drink has been recorded yet.
         goal_progress: Fraction of daily goal reached (0.0–1.0+).
-        observation_pending: True if a button press has been recorded
-            that has not yet been acknowledged by staff.
         evaluated_at: Unix timestamp of this evaluation.
     """
 
     level: AlertLevel
     time_since_last_drink_s: float | None
     goal_progress: float
-    observation_pending: bool
     evaluated_at: float
 
 
@@ -63,20 +59,19 @@ class AlertEngine:
     summary changes). The result can then be passed directly to the LED
     controller and any notification handlers.
 
-    Quiet hours suppress everything except URGENT alerts, so the LED
-    does not disturb sleeping patients.
+    Quiet hours suppress everything except URGENT alerts so the cactus
+    LED does not disturb sleeping patients overnight.
 
     Example::
 
-        engine = AlertEngine(config)
+        engine = AlertEngine(config, daily_goal_ml=1500.0)
         state = engine.evaluate(session.summary())
         led_controller.apply(state.level)
     """
 
-    def __init__(self, config: SystemConfig):
+    def __init__(self, config: SystemConfig, daily_goal_ml: float = 2000.0):
         self._config: AlertConfig = config.alert
-        self._observation_pending: bool = False
-        self._observation_timestamp: float | None = None
+        self._daily_goal_ml: float = daily_goal_ml
 
     def evaluate(self, summary: SessionSummary) -> AlertState:
         """
@@ -84,7 +79,7 @@ class AlertEngine:
 
         Args:
             summary: Current session snapshot from
-                :class:`session_manager.SessionManager`.
+                :class:`session.SessionManager`.
 
         Returns:
             An :class:`AlertState` reflecting the system's current
@@ -98,15 +93,13 @@ class AlertEngine:
             else None
         )
 
-        goal_progress = (
-            summary.total_consumed_ml / max(1.0, self._config.no_drink_warning_s)
-        )
+        goal_progress = summary.total_consumed_ml / max(1.0, self._daily_goal_ml)
 
         in_quiet_hours = self._in_quiet_hours(now)
 
         level = self._compute_level(
             time_since_drink=time_since_drink,
-            goal_progress=summary.total_consumed_ml,
+            goal_progress=goal_progress,
             in_quiet_hours=in_quiet_hours,
         )
 
@@ -114,33 +107,8 @@ class AlertEngine:
             level=level,
             time_since_last_drink_s=time_since_drink,
             goal_progress=goal_progress,
-            observation_pending=self._observation_pending,
             evaluated_at=now,
         )
-
-    def record_button_press(self) -> None:
-        """
-        Record that the observation button has been pressed.
-
-        Sets ``observation_pending`` to True on subsequent
-        :meth:`evaluate` calls until :meth:`acknowledge_observation`
-        is called.
-        """
-        self._observation_pending = True
-        self._observation_timestamp = time.time()
-
-    def acknowledge_observation(self) -> float | None:
-        """
-        Acknowledge a pending observation, clearing the pending flag.
-
-        Returns:
-            The Unix timestamp of the button press that is being
-            acknowledged, or None if no observation was pending.
-        """
-        ts = self._observation_timestamp
-        self._observation_pending = False
-        self._observation_timestamp = None
-        return ts
 
     def _compute_level(
         self,
@@ -148,16 +116,19 @@ class AlertEngine:
         goal_progress: float,
         in_quiet_hours: bool,
     ) -> AlertLevel:
-        # No drink recorded yet — treat as if the full warning window
-        # has elapsed to give an immediate gentle reminder on startup.
+        if goal_progress >= 1.0:
+            return AlertLevel.GOAL_REACHED
+
+        # No drink recorded yet — treat as if the full warning window has
+        # elapsed to give an immediate gentle reminder on startup.
         if time_since_drink is None:
             if in_quiet_hours:
                 return AlertLevel.IDLE
             return AlertLevel.REMINDER
 
         if time_since_drink >= self._config.no_drink_urgent_s:
-            # Urgent overrides quiet hours — a very long absence is
-            # worth a gentle light even at night.
+            # Urgent overrides quiet hours — a very long absence warrants
+            # a gentle light even overnight.
             return AlertLevel.URGENT
 
         if in_quiet_hours:
@@ -180,7 +151,7 @@ class AlertEngine:
         start = self._config.quiet_hours_start
         end = self._config.quiet_hours_end
 
-        # Handle ranges that wrap midnight (e.g. 22:00 → 07:00)
+        # Handle ranges that wrap midnight (e.g. 22:00 → 07:00).
         if start > end:
             return hour >= start or hour < end
         return start <= hour < end

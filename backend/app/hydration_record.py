@@ -1,31 +1,29 @@
 """
-Hydration Record for the Hydration Monitoring System.
+Hydration Record for the DRIP Hydration Monitoring System.
 
-Persists drink events, refill events, button observations, and session
-summaries to disk. Uses newline-delimited JSON (one record per line) for
-simplicity and robustness — records can be appended without rewriting
-the file, and a corrupted line does not invalidate the rest.
+Persists drink events, sleep events, and session summaries to disk.
+Uses newline-delimited JSON (one record per line) for simplicity and
+robustness — records can be appended without rewriting the file, and a
+corrupted line does not invalidate the rest.
 
-Each bed gets its own file named by bed ID. The persistence
-layer is intentionally dumb: it writes records and reads them back. All
+Each bed gets its own file named by bed ID. The persistence layer is
+intentionally dumb: it writes records and reads them back. All
 interpretation (daily totals, trend analysis) is left to upstream
 consumers.
 
-This module has no hardware dependencies and can be used as-is.
-If you later want a proper database backend, swap out the
-:class:`JsonLinesHydrationRecord` implementation while keeping the
-:class:`HydrationRecord` abstract interface.
+If you later want a proper database backend, swap out
+:class:`JsonLinesHydrationRecord` while keeping the :class:`HydrationRecord`
+abstract interface.
 """
 
 import abc
 import json
-import os
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from app.observation_button import ButtonObservation
-from app.interactions.session import DrinkEvent, RefillEvent, SessionSummary
+from app.input_buttons import SleepToggleEvent
+from app.interactions.session import DrinkEvent, SessionSummary
 
 
 @dataclass
@@ -34,9 +32,9 @@ class PersistedRecord:
     A single record as stored on disk.
 
     Attributes:
-        record_type: One of ``"drink"``, ``"refill"``, ``"observation"``,
-            or ``"session_summary"``.
-        bed_id: Identifier of the patient this record belongs to.
+        record_type: One of ``"drink"``, ``"sleep"``, or
+            ``"session_summary"``.
+        bed_id: Identifier of the bed this record belongs to.
         timestamp: Unix timestamp of the event.
         payload: Event-specific data as a plain dict.
     """
@@ -48,32 +46,21 @@ class PersistedRecord:
 
 
 class HydrationRecord(abc.ABC):
-    """
-    Abstract base class for the persistence layer.
-
-    Subclass this to replace the JSON file backend with a database,
-    cloud API, or any other storage mechanism.
-    """
+    """Abstract base class for the persistence layer."""
 
     @abc.abstractmethod
     def write_drink(self, bed_id: str, event: DrinkEvent) -> None:
-        """Persist a drink event for the given patient."""
+        """Persist a drink event."""
 
     @abc.abstractmethod
-    def write_refill(self, bed_id: str, event: RefillEvent) -> None:
-        """Persist a refill event for the given patient."""
-
-    @abc.abstractmethod
-    def write_observation(
-        self, bed_id: str, observation: ButtonObservation
-    ) -> None:
-        """Persist a button observation for the given patient."""
+    def write_sleep_event(self, bed_id: str, event: SleepToggleEvent) -> None:
+        """Persist a sleep/wake toggle event."""
 
     @abc.abstractmethod
     def write_session_summary(
         self, bed_id: str, summary: SessionSummary
     ) -> None:
-        """Persist a session summary snapshot for the given patient."""
+        """Persist a session summary snapshot."""
 
     @abc.abstractmethod
     def read_drinks(
@@ -82,48 +69,33 @@ class HydrationRecord(abc.ABC):
         since: float | None = None,
     ) -> list[DrinkEvent]:
         """
-        Return drink events for a patient, optionally filtered by time.
+        Return drink events for a bed, optionally filtered by time.
 
         Args:
-            bed_id: Patient to query.
+            bed_id: Bed to query.
             since: If provided, only return events with a timestamp at
                 or after this Unix timestamp.
-
-        Returns:
-            List of :class:`DrinkEvent` instances in chronological order.
         """
 
     @abc.abstractmethod
-    def read_observations(
+    def read_sleep_events(
         self,
         bed_id: str,
-        unacknowledged_only: bool = False,
-    ) -> list[ButtonObservation]:
-        """
-        Return button observations for a patient.
-
-        Args:
-            bed_id: Patient to query.
-            unacknowledged_only: If True, return only observations that
-                have not yet been acknowledged by staff.
-
-        Returns:
-            List of :class:`ButtonObservation` instances.
-        """
+        since: float | None = None,
+    ) -> list[SleepToggleEvent]:
+        """Return sleep toggle events for a bed."""
 
 
 class JsonLinesHydrationRecord(HydrationRecord):
     """
     File-based persistence using newline-delimited JSON.
 
-    Each bed's records are stored in a separate ``.jsonl`` file
-    inside ``storage_dir``. Records are appended on write, so the file
-    grows over time. For long-running deployments, add a rotation
-    strategy (e.g. one file per day per patient).
+    Each bed's records are stored in a separate ``.jsonl`` file inside
+    ``storage_dir``. Records are appended on write so the file grows
+    over time. For long-running deployments add a daily rotation strategy.
 
     Args:
-        storage_dir: Directory in which patient record files are stored.
-            Created automatically if it does not exist.
+        storage_dir: Directory for record files. Created if absent.
     """
 
     def __init__(self, storage_dir: str | Path = "records"):
@@ -137,42 +109,18 @@ class JsonLinesHydrationRecord(HydrationRecord):
                 record_type="drink",
                 bed_id=bed_id,
                 timestamp=event.timestamp,
-                payload={
-                    "volume_ml": event.volume_ml,
-                    "confidence": event.confidence,
-                    "raw_net_change_g": event.raw_net_change_g,
-                },
+                payload={"volume_ml": event.volume_ml},
             ),
         )
 
-    def write_refill(self, bed_id: str, event: RefillEvent) -> None:
+    def write_sleep_event(self, bed_id: str, event: SleepToggleEvent) -> None:
         self._append(
             bed_id,
             PersistedRecord(
-                record_type="refill",
+                record_type="sleep",
                 bed_id=bed_id,
                 timestamp=event.timestamp,
-                payload={
-                    "volume_added_ml": event.volume_added_ml,
-                    "confidence": event.confidence,
-                    "raw_net_change_g": event.raw_net_change_g,
-                },
-            ),
-        )
-
-    def write_observation(
-        self, bed_id: str, observation: ButtonObservation
-    ) -> None:
-        self._append(
-            bed_id,
-            PersistedRecord(
-                record_type="observation",
-                bed_id=bed_id,
-                timestamp=observation.timestamp,
-                payload={
-                    "note": observation.note,
-                    "acknowledged": observation.acknowledged,
-                },
+                payload={"sleeping": event.sleeping},
             ),
         )
 
@@ -189,7 +137,6 @@ class JsonLinesHydrationRecord(HydrationRecord):
                     "session_state": summary.session_state.value,
                     "total_consumed_ml": summary.total_consumed_ml,
                     "drink_count": summary.drink_count,
-                    "refill_count": summary.refill_count,
                     "duration_s": summary.duration_s,
                 },
             ),
@@ -209,29 +156,27 @@ class JsonLinesHydrationRecord(HydrationRecord):
                 DrinkEvent(
                     timestamp=r.timestamp,
                     volume_ml=r.payload["volume_ml"],
-                    confidence=r.payload["confidence"],
-                    raw_net_change_g=r.payload["raw_net_change_g"],
                 )
             )
         return events
 
-    def read_observations(
+    def read_sleep_events(
         self,
         bed_id: str,
-        unacknowledged_only: bool = False,
-    ) -> list[ButtonObservation]:
-        records = self._read_all(bed_id, record_type="observation")
-        observations = []
+        since: float | None = None,
+    ) -> list[SleepToggleEvent]:
+        records = self._read_all(bed_id, record_type="sleep")
+        events = []
         for r in records:
-            obs = ButtonObservation(
-                timestamp=r.timestamp,
-                note=r.payload.get("note", ""),
-                acknowledged=r.payload.get("acknowledged", False),
-            )
-            if unacknowledged_only and obs.acknowledged:
+            if since is not None and r.timestamp < since:
                 continue
-            observations.append(obs)
-        return observations
+            events.append(
+                SleepToggleEvent(
+                    timestamp=r.timestamp,
+                    sleeping=r.payload.get("sleeping", True),
+                )
+            )
+        return events
 
     def _file_path(self, bed_id: str) -> Path:
         safe_id = "".join(c for c in bed_id if c.isalnum() or c in "-_")

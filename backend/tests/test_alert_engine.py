@@ -6,6 +6,8 @@ from app.alert_engine import AlertEngine, AlertLevel
 from app.config import SystemConfig
 from app.interactions.session import SessionState, SessionSummary
 
+DAILY_GOAL_ML = 2000.0
+
 
 def make_summary(
     last_drink_time=None,
@@ -16,7 +18,6 @@ def make_summary(
         session_state=SessionState.ACTIVE,
         total_consumed_ml=total_consumed_ml,
         drink_count=drink_count,
-        refill_count=0,
         start_time=time.time() - 60,
         duration_s=60.0,
         last_drink_time=last_drink_time,
@@ -25,7 +26,7 @@ def make_summary(
 
 @pytest.fixture
 def engine(config):
-    return AlertEngine(config)
+    return AlertEngine(config, daily_goal_ml=DAILY_GOAL_ML)
 
 
 class TestAlertLevels:
@@ -35,7 +36,6 @@ class TestAlertLevels:
         assert state.level == AlertLevel.IDLE
 
     def test_reminder_after_warning_threshold(self, engine, config):
-        # config fixture sets no_drink_warning_s = 10
         t = time.time() - config.alert.no_drink_warning_s - 1
         summary = make_summary(last_drink_time=t)
         state = engine.evaluate(summary)
@@ -52,13 +52,17 @@ class TestAlertLevels:
         state = engine.evaluate(summary)
         assert state.level == AlertLevel.REMINDER
 
+    def test_goal_reached_when_fully_consumed(self, engine):
+        summary = make_summary(total_consumed_ml=DAILY_GOAL_ML)
+        state = engine.evaluate(summary)
+        assert state.level == AlertLevel.GOAL_REACHED
+
 
 class TestQuietHours:
     def test_suppresses_reminder_during_quiet_hours(self, config):
         config.alert.quiet_hours_start = 0
         config.alert.quiet_hours_end = 23
-        engine = AlertEngine(config)
-        # long time since last drink — would normally be REMINDER
+        engine = AlertEngine(config, daily_goal_ml=DAILY_GOAL_ML)
         t = time.time() - config.alert.no_drink_warning_s - 1
         summary = make_summary(last_drink_time=t)
         state = engine.evaluate(summary)
@@ -67,39 +71,30 @@ class TestQuietHours:
     def test_urgent_not_suppressed_during_quiet_hours(self, config):
         config.alert.quiet_hours_start = 0
         config.alert.quiet_hours_end = 23
-        engine = AlertEngine(config)
+        engine = AlertEngine(config, daily_goal_ml=DAILY_GOAL_ML)
         t = time.time() - config.alert.no_drink_urgent_s - 1
         summary = make_summary(last_drink_time=t)
         state = engine.evaluate(summary)
         assert state.level == AlertLevel.URGENT
 
     def test_no_quiet_hours_when_disabled(self, config):
-        # conftest already sets quiet_hours_start/end to None
-        engine = AlertEngine(config)
+        engine = AlertEngine(config, daily_goal_ml=DAILY_GOAL_ML)
         t = time.time() - config.alert.no_drink_warning_s - 1
         summary = make_summary(last_drink_time=t)
         state = engine.evaluate(summary)
         assert state.level == AlertLevel.REMINDER
 
 
-class TestObservationButton:
-    def test_button_press_sets_pending(self, engine):
-        summary = make_summary(last_drink_time=time.time())
-        engine.record_button_press()
+class TestGoalProgress:
+    def test_goal_progress_zero_at_start(self, engine):
+        summary = make_summary(total_consumed_ml=0.0)
         state = engine.evaluate(summary)
-        assert state.observation_pending is True
+        assert state.goal_progress == pytest.approx(0.0)
 
-    def test_acknowledge_clears_pending(self, engine):
-        summary = make_summary(last_drink_time=time.time())
-        engine.record_button_press()
-        ts = engine.acknowledge_observation()
+    def test_goal_progress_half(self, engine):
+        summary = make_summary(total_consumed_ml=DAILY_GOAL_ML / 2)
         state = engine.evaluate(summary)
-        assert state.observation_pending is False
-        assert ts is not None
-
-    def test_acknowledge_with_no_press_returns_none(self, engine):
-        result = engine.acknowledge_observation()
-        assert result is None
+        assert state.goal_progress == pytest.approx(0.5)
 
 
 class TestMetadata:
