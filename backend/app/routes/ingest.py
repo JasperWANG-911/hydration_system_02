@@ -24,7 +24,6 @@ import hashlib
 import hmac
 import json
 import logging
-import struct
 from datetime import datetime, timezone
 from typing import Literal
 
@@ -39,15 +38,12 @@ from app.events import update_device_heartbeat
 from app.interactions import DrinkEvent, registry
 from app.models import Bed, Device, Event
 from app.pubsub import broker, publish_priority_snapshot
+from protocol.event_codec import EVENT_INTAKE, Event as DripEvent, EventCodecError, decode
+from protocol.framing import FramingError, unwrap_frame
 
 log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/ingest")
-
-# BLE frame event type codes — must match firmware/ble_transport.py
-_EVT_INTAKE = 0x01
-_EVT_SLEEP_START = 0x02
-_EVT_SLEEP_END = 0x03
 
 
 # ---------------------------------------------------------------------------
@@ -121,26 +117,23 @@ def _ensure_utc(ts: datetime) -> datetime:
     return ts if ts.tzinfo is not None else ts.replace(tzinfo=timezone.utc)
 
 
-def _decode_ble_frame(data_value: str) -> tuple[int, float, int] | None:
+def _decode_ble_frame(data_value: str) -> DripEvent | None:
     """
     Decode a base64-encoded DRIP BLE frame from a Camgenium dataValue.
 
-    Frame format (7 bytes, little-endian):
-        byte 0:    event type  (0x01=intake, 0x02=sleep_start, 0x03=sleep_end)
-        bytes 1-2: volume_ml   (uint16; 0 for sleep events)
-        bytes 3-6: ts_ms       (uint32, device ticks_ms at time of event)
+    The bytes carried in ``dataValue`` are exactly what the firmware wrote
+    to the PicoRelay GATT characteristic: a SOLO frame (``protocol.framing``)
+    wrapping a 7-byte event payload (``protocol.event_codec``). We unwrap
+    the frame and decode the event.
 
     Returns:
-        Tuple of (event_type, volume_ml, ts_ms), or None if the frame
-        cannot be decoded (wrong length, corrupt base64, etc.).
+        A :class:`protocol.event_codec.Event`, or None if the frame
+        cannot be decoded (corrupt base64, bad framing, unknown event).
     """
     try:
         raw = base64.b64decode(data_value)
-        if len(raw) < 7:
-            return None
-        event_type, volume_ml, ts_ms = struct.unpack_from("<BHI", raw)
-        return event_type, float(volume_ml), ts_ms
-    except Exception:
+        return decode(unwrap_frame(raw))
+    except (FramingError, EventCodecError, ValueError):
         return None
 
 
@@ -210,8 +203,8 @@ async def _ingest_camgenium(
     drinks_produced: list[DrinkEvent] = []
 
     for record in cg.data:
-        decoded = _decode_ble_frame(record.dataValue)
-        if decoded is None:
+        event = _decode_ble_frame(record.dataValue)
+        if event is None:
             log.warning(
                 "Skipping undecodable BLE frame from %s: %s",
                 instrument_id,
@@ -219,23 +212,22 @@ async def _ingest_camgenium(
             )
             continue
 
-        event_type, volume_ml, _ts_ms = decoded
         record_ts = _ensure_utc(record.timestamp).timestamp()
 
-        if event_type == _EVT_INTAKE:
-            runner.record_intake(volume_ml, record_ts)
+        if event.type == EVENT_INTAKE and event.arg > 0:
+            # arg is the intake delta in ml. Negative corrections are
+            # handled on-device for now (sleep/aggregation deferred).
+            runner.record_intake(float(event.arg), record_ts)
             accepted_intake += 1
-        elif event_type in (_EVT_SLEEP_START, _EVT_SLEEP_END):
-            # Sleep events are informational at the backend for now;
-            # they affect the on-device pace model only.
+        else:
+            # LIGHT / RESET (and -ve corrections) are informational at the
+            # backend for now.
             log.debug(
-                "Sleep event type=%d from %s at %s",
-                event_type,
+                "Non-intake event %s from %s at %s",
+                event,
                 instrument_id,
                 record.timestamp,
             )
-        else:
-            log.warning("Unknown BLE frame event_type=%d from %s", event_type, instrument_id)
 
     drinks_produced = runner.drain()
     await _persist_events(session, instrument_id, drinks_produced)

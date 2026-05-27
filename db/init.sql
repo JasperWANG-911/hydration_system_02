@@ -40,18 +40,6 @@ CREATE TABLE events (
 
 CREATE INDEX ON events (device_id, ts DESC);
 
--- Raw load-cell readings (one row per sample sent by the gateway).
--- Audited so the classifier output can always be recomputed from source.
-CREATE TABLE measurements (
-    ts          TIMESTAMPTZ NOT NULL,
-    device_id   TEXT NOT NULL REFERENCES devices(device_id),
-    weight_g    REAL NOT NULL,
-    cup_present BOOLEAN,
-    PRIMARY KEY (ts, device_id)
-);
-
-CREATE INDEX ON measurements (device_id, ts DESC);
-
 CREATE TABLE alerts (
     alert_id    BIGSERIAL PRIMARY KEY,
     bed_id      TEXT NOT NULL REFERENCES beds(bed_id),

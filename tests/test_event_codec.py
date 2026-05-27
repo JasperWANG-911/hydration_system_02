@@ -7,7 +7,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from event_codec import (  # noqa: E402
+from protocol.event_codec import (  # noqa: E402
     EVENT_INTAKE,
     EVENT_LIGHT,
     EVENT_RESET,
@@ -91,7 +91,7 @@ def test_arg_out_of_range_rejected():
 
 def test_end_to_end_through_framing():
     """The real path: event -> payload -> frame -> payload -> event."""
-    from framing import build_frame, unwrap_frame
+    from protocol.framing import build_frame, unwrap_frame
 
     ev = intake(-50, ts=1700000123)
     frame = build_frame(encode(ev), msg_id=0x10)

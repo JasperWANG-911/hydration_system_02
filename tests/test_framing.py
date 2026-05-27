@@ -8,7 +8,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from framing import (  # noqa: E402
+from protocol.framing import (  # noqa: E402
     FLAG_SOLO,
     HEADER_BYTES,
     PAYLOAD_PER_FRAME,

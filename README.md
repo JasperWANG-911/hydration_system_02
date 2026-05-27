@@ -1,14 +1,13 @@
-# Hydration Monitoring System
+# DRIP Hydration Monitoring System
 
-A nurse-facing dashboard backed by load-cell coasters that estimate
-patient fluid intake.
+A nurse-facing dashboard backed by DRIP bedside button boxes. Each unit
+has three buttons (+ / − / sleep), a reminder LED, and an LCD; patients
+log their own intake by pressing the buttons.
 
 ```
-Pi Pico + HX711 + load cell  ─BLE─▶  phone gateway  ─HTTPS─▶
-    Camgenium Harvester  ─webhook─▶  FastAPI backend  ─SSE─▶  corridor screen
+Pi Pico W (3 buttons + LED + LCD)  ─BLE─▶  Camgenium relay  ─webhook─▶
+    FastAPI backend  ─SSE─▶  corridor screen
 ```
-
-See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design.
 
 ## Quick start (local demo, no real hardware)
 
@@ -21,7 +20,7 @@ docker compose up --build
 # 2. (optional) Seed extra demo data
 python scripts/seed.py
 
-# 3. Drive fake coaster data
+# 3. Drive fake button-box data
 python scripts/fake_gateway.py
 
 # 4. Open the dashboard
@@ -29,9 +28,9 @@ open http://localhost:8000          # bed grid + filter
 open http://localhost:8000/corridor # nurse-station view
 ```
 
-`fake_gateway.py` simulates five coasters posting raw weight samples at
-10 Hz. After ~10 s of warm-up (the classifier's stability buffer needs
-to fill), the dashboard will start showing drink/refill events.
+`fake_gateway.py` simulates five button boxes POSTing aggregated intake
+events on a realistic schedule (heavier at mealtimes). Drink events show
+up on the dashboard as they arrive.
 
 ## Connecting to Camgenium (for real-hardware demos)
 
@@ -65,12 +64,14 @@ pytest
 
 ## Repo map
 
-- `firmware/` — Raspberry Pi Pico MicroPython (HX711 driver, sampling
-  loop, BLE transmit stub).
-- `backend/app/` — FastAPI app, classifier, alerts, dashboard.
-- `backend/app/interactions/` — platform state machine + session
-  aggregator + per-device runner registry.
-- `scripts/` — `seed.py`, `fake_gateway.py`.
-- `db/init.sql` — Timescale schema + seed.
-- `platform_interaction_model_spec.txt` — design notes the classifier
-  is built against.
+- `firmware/` — Raspberry Pi Pico W MicroPython (button box: 3-button
+  sampling loop, LED, LCD, BLE transmit).
+- `protocol/` — shared BLE wire format (`event_codec` + `framing`) used
+  by both the firmware sender and the backend ingest decoder.
+- `backend/app/` — FastAPI app, alerts, dashboard, and the DRIP
+  bedside pipeline (buttons → session → alert → LED/display).
+- `backend/app/interactions/` — session aggregator + per-device runner
+  registry used by the ingest route.
+- `scripts/` — `seed.py`, `fake_gateway.py` (HTTP sim),
+  `fake_pico_ble.py` (BLE relay sim), Camgenium helpers.
+- `db/init.sql` — Postgres schema + seed.

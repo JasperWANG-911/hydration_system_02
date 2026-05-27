@@ -5,10 +5,10 @@ writes DRIP-formatted frames into the writable GATT characteristic.
 The Camgenium relay should pick these up and forward them to the backend
 webhook as base64-encoded ``dataValue`` fields.
 
-Frame format (7 bytes, little-endian) — matches firmware/ble_transport.py:
-    byte  0:   event type  (0x01=intake, 0x02=sleep_start, 0x03=sleep_end)
-    bytes 1-2: volume_ml   (uint16)
-    bytes 3-6: ts_ms       (uint32, milliseconds since epoch mod 2^32)
+Frames use the shared ``protocol`` package: an intake event encoded with
+``event_codec`` and wrapped in a SOLO frame with ``framing`` — exactly
+what firmware/ble_transport.py builds and what the backend ingest
+endpoint decodes.
 
 Usage::
 
@@ -21,6 +21,7 @@ Requires::
 """
 
 import asyncio
+import os
 import random
 import struct
 import sys
@@ -28,19 +29,34 @@ import time
 
 from bleak import BleakClient, BleakScanner
 
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from protocol.event_codec import encode, intake  # noqa: E402
+from protocol.framing import build_frame  # noqa: E402
+
 DEVICE_NAME_PREFIX = "L2S2R-"
 SERVICE_UUID = "8a3e4d2f-1b6c-4f9e-a7d8-3e5b2c1f4a01"
 
-# Event type codes — keep in sync with firmware/ble_transport.py
-EVT_INTAKE      = 0x01
+# Legacy raw event type codes (sleep path only; intake uses event_codec).
 EVT_SLEEP_START = 0x02
 EVT_SLEEP_END   = 0x03
 
 STEP_ML = 50
 DRINK_INTERVAL_S = 1800  # simulate a drink every 30 min
 
+_msg_id = 0
 
-def _build_frame(event_type: int, volume_ml: int) -> bytes:
+
+def _next_msg_id() -> int:
+    global _msg_id
+    _msg_id = (_msg_id + 1) & 0xFF
+    return _msg_id
+
+
+def _build_intake_frame(volume_ml: int) -> bytes:
+    return build_frame(encode(intake(volume_ml)), _next_msg_id())
+
+
+def _build_legacy_frame(event_type: int, volume_ml: int) -> bytes:
     ts_ms = int(time.time() * 1000) & 0xFFFFFFFF
     return struct.pack("<BHI", event_type, volume_ml & 0xFFFF, ts_ms)
 
@@ -98,7 +114,7 @@ async def push():
             # Simulate a drink: 2-5 presses worth
             presses = random.randint(2, 5)
             volume_ml = presses * STEP_ML
-            frame = _build_frame(EVT_INTAKE, volume_ml)
+            frame = _build_intake_frame(volume_ml)
 
             try:
                 await client.write_gatt_char(char, frame, response=use_response)
@@ -114,11 +130,11 @@ async def push():
 
             # Occasionally simulate a sleep toggle
             if random.random() < 0.05:
-                sleep_frame = _build_frame(EVT_SLEEP_START, 0)
+                sleep_frame = _build_legacy_frame(EVT_SLEEP_START, 0)
                 await client.write_gatt_char(char, sleep_frame, response=use_response)
                 print(f"[{event_count:>4}] sleep_start  frame={sleep_frame.hex()}")
                 await asyncio.sleep(5)
-                wake_frame = _build_frame(EVT_SLEEP_END, 0)
+                wake_frame = _build_legacy_frame(EVT_SLEEP_END, 0)
                 await client.write_gatt_char(char, wake_frame, response=use_response)
                 print(f"[{event_count:>4}] sleep_end    frame={wake_frame.hex()}")
                 event_count += 2
