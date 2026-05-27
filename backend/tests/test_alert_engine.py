@@ -100,6 +100,62 @@ class TestGoalProgress:
         assert state.goal_progress == pytest.approx(0.5)
 
 
+class TestPaceAwareThresholds:
+    """Alert threshold adapts based on the pace model deficit."""
+
+    def test_idle_when_ahead_and_within_extended_window(self, config):
+        """Deficit=0 (ahead) → 30-s window; 8 s since drink → IDLE."""
+        engine = AlertEngine(config, daily_goal_ml=DAILY_GOAL_ML)
+        # 8 s is past the base warning (10 s) but within ahead window (30 s)
+        t = time.time() - 8
+        summary = make_summary(last_drink_time=t)
+        state = engine.evaluate(summary, deficit_ml=0.0)
+        assert state.level == AlertLevel.IDLE
+
+    def test_reminder_when_ahead_but_past_extended_window(self, config):
+        """Deficit=0 → 30-s window; 31 s since drink → REMINDER."""
+        engine = AlertEngine(config, daily_goal_ml=DAILY_GOAL_ML)
+        t = time.time() - (config.alert.no_drink_warning_ahead_s + 1)
+        summary = make_summary(last_drink_time=t)
+        state = engine.evaluate(summary, deficit_ml=0.0)
+        assert state.level == AlertLevel.REMINDER
+
+    def test_reminder_when_behind_and_past_short_window(self, config):
+        """Deficit ≥ threshold → 5-s window; 7 s since drink → REMINDER."""
+        engine = AlertEngine(config, daily_goal_ml=DAILY_GOAL_ML)
+        # 7 s is between short (5 s) and base (10 s) windows
+        t = time.time() - 7
+        summary = make_summary(last_drink_time=t)
+        state = engine.evaluate(summary, deficit_ml=config.alert.behind_threshold_ml)
+        assert state.level == AlertLevel.REMINDER
+
+    def test_idle_when_behind_but_within_short_window(self, config):
+        """Deficit ≥ threshold → 5-s window; 3 s since drink → still IDLE."""
+        engine = AlertEngine(config, daily_goal_ml=DAILY_GOAL_ML)
+        t = time.time() - 3
+        summary = make_summary(last_drink_time=t)
+        state = engine.evaluate(summary, deficit_ml=config.alert.behind_threshold_ml)
+        assert state.level == AlertLevel.IDLE
+
+    def test_base_window_when_no_deficit_provided(self, config):
+        """No deficit_ml → base 10-s window; 11 s since drink → REMINDER."""
+        engine = AlertEngine(config, daily_goal_ml=DAILY_GOAL_ML)
+        t = time.time() - (config.alert.no_drink_warning_s + 1)
+        summary = make_summary(last_drink_time=t)
+        state = engine.evaluate(summary)  # no deficit_ml arg
+        assert state.level == AlertLevel.REMINDER
+
+    def test_slight_deficit_uses_base_window(self, config):
+        """Deficit below threshold → base window, not shortened window."""
+        engine = AlertEngine(config, daily_goal_ml=DAILY_GOAL_ML)
+        slight_deficit = config.alert.behind_threshold_ml - 1  # just under threshold
+        # 7 s is past short window (5 s) but within base window (10 s)
+        t = time.time() - 7
+        summary = make_summary(last_drink_time=t)
+        state = engine.evaluate(summary, deficit_ml=slight_deficit)
+        assert state.level == AlertLevel.IDLE  # base window not yet exceeded
+
+
 class TestMetadata:
     def test_time_since_drink_in_state(self, engine):
         t = time.time() - 30

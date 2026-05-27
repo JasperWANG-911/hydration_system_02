@@ -72,11 +72,18 @@ class SessionConfig:
 
 @dataclass
 class AlertConfig:
-    no_drink_warning_s: float = 1800.0   # 30 min → REMINDER
-    no_drink_urgent_s: float = 3600.0    # 60 min → URGENT
+    # Base warning (30 min) — used when no pace data is available.
+    no_drink_warning_s: float = 1800.0
+    # Shortened warning (15 min) — patient is significantly behind on pace.
+    no_drink_warning_behind_s: float = 900.0
+    # Extended warning (45 min) — patient is on pace or ahead.
+    no_drink_warning_ahead_s: float = 2700.0
+    # Absolute maximum (60 min) — always triggers, overrides quiet hours.
+    no_drink_urgent_s: float = 3600.0
+    # Pace deficit (ml) that classifies the patient as "significantly behind".
+    behind_threshold_ml: float = 150.0
     quiet_hours_start: int | None = 22
     quiet_hours_end: int | None = 7
-    goal_reached_display_s: float = 10.0
 
 
 @dataclass
@@ -93,11 +100,31 @@ class LedConfig:
 
 @dataclass
 class PaceModelConfig:
-    """Configuration for the expected-intake pace model."""
+    """Configuration for the expected-intake pace model.
+
+    Default milestone curve (Addenbrooke's / nurse guidance):
+      - 0 h  →   0 % of daily goal  (session start)
+      - 6 h  →  53 % of daily goal  (~800 ml at 1500 ml minimum; midday anchor)
+      - 16 h → 100 % of daily goal  (end of active day)
+
+    Front-loads morning intake: morning rate ≈ 1.4 × the afternoon rate,
+    matching the nurse's recommendation that patients reach roughly half
+    their daily target by midday.
+    """
     update_interval_s: float = 1800.0   # refresh display every 30 min
     daily_reset_hour: int = 6           # new session starts at 06:00
-    active_day_hours: float = 16.0      # assumed waking hours for linear model
-    weighted: bool = False              # use meal-weighted curve instead of linear
+    active_day_hours: float = 16.0      # assumed waking hours (used by linear mode)
+    # Grace period: no deficit is shown for this many seconds after session
+    # start, so the display does not open with an immediate deficit.
+    grace_period_s: float = 1800.0      # 30 min
+    # Pace mode: "milestone" (default, piecewise linear) or "linear" (uniform).
+    mode: str = "milestone"
+    # Parallel lists defining the piecewise-linear target curve.
+    # milestone_hours[i] = elapsed active hours at waypoint i.
+    # milestone_fractions[i] = fraction of daily_goal expected by that time.
+    # First entry must be (0, 0); last entry should be (active_day_hours, 1.0).
+    milestone_hours: list = field(default_factory=lambda: [0.0, 6.0, 16.0])
+    milestone_fractions: list = field(default_factory=lambda: [0.0, 0.53, 1.0])
 
 
 @dataclass

@@ -119,26 +119,67 @@ class TestDisplayUpdates:
 
 class TestPaceModel:
     def test_expected_zero_at_start(self, config, bed):
+        """t=0 is within grace period → expected = 0."""
         from app.pace_model import PaceModel
         pm = PaceModel(config, bed)
         assert pm.expected_by_now(0.0) == pytest.approx(0.0)
 
-    def test_expected_grows_with_time(self, config, bed):
+    def test_expected_zero_during_grace_period(self, config, bed):
+        """Any time within grace_period_s → expected = 0."""
         from app.pace_model import PaceModel
         pm = PaceModel(config, bed)
+        grace = config.pace_model.grace_period_s
+        assert pm.expected_by_now(grace - 1) == pytest.approx(0.0)
+
+    def test_expected_positive_after_grace_period(self, config, bed):
+        """Just after grace period the curve starts — expected > 0."""
+        from app.pace_model import PaceModel
+        pm = PaceModel(config, bed)
+        grace = config.pace_model.grace_period_s
+        assert pm.expected_by_now(grace + 60) > 0
+
+    def test_expected_grows_with_time(self, config, bed):
+        """Expected intake increases monotonically after grace period."""
+        from app.pace_model import PaceModel
+        pm = PaceModel(config, bed)
+        # Both well past grace period (default 1800 s)
         early = pm.expected_by_now(3600.0)
         later = pm.expected_by_now(7200.0)
         assert later > early
 
-    def test_deficit_zero_when_ahead(self, config, bed):
+    def test_midday_milestone(self, config, bed):
+        """At 6 h elapsed, expected ≈ 53 % of daily goal."""
         from app.pace_model import PaceModel
         pm = PaceModel(config, bed)
-        # 0 elapsed → 0 expected → 0 deficit regardless of actual
+        expected = pm.expected_by_now(6 * 3600)
+        # bed.daily_goal_ml = 1000; 53 % = 530
+        assert expected == pytest.approx(530.0, abs=1.0)
+
+    def test_deficit_zero_when_ahead(self, config, bed):
+        """Within grace period: expected = 0 → deficit = 0 regardless of actual."""
+        from app.pace_model import PaceModel
+        pm = PaceModel(config, bed)
         assert pm.deficit(actual_ml=500.0, active_elapsed_s=0.0) == pytest.approx(0.0)
 
     def test_deficit_positive_when_behind(self, config, bed):
+        """8 h elapsed, nothing drunk → large positive deficit."""
         from app.pace_model import PaceModel
         pm = PaceModel(config, bed)
-        # After 8 hours: expect ~500ml (linear, 1000ml goal, 16hr day)
         deficit = pm.deficit(actual_ml=0.0, active_elapsed_s=8 * 3600)
         assert deficit > 0
+
+    def test_deficit_zero_when_far_ahead(self, config, bed):
+        """Patient who drank well above expected → deficit clamped to 0."""
+        from app.pace_model import PaceModel
+        pm = PaceModel(config, bed)
+        deficit = pm.deficit(actual_ml=bed.daily_goal_ml, active_elapsed_s=3600.0)
+        assert deficit == pytest.approx(0.0)
+
+    def test_linear_mode(self, config, bed):
+        """Linear mode produces uniform rate — 50 % expected at 50 % of day."""
+        from app.pace_model import PaceModel
+        config.pace_model.mode = "linear"
+        pm = PaceModel(config, bed)
+        half_day_s = config.pace_model.active_day_hours * 3600 / 2
+        expected = pm.expected_by_now(half_day_s)
+        assert expected == pytest.approx(bed.daily_goal_ml * 0.5, abs=1.0)

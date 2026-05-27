@@ -167,7 +167,12 @@ class Pipeline:
                 # Display updates immediately on intake via the on_drink callback.
 
             summary = self._session.summary()
-            alert_state = self._alert_engine.evaluate(summary)
+            # Pass the live pace deficit so the alert engine can shorten or
+            # extend the warning window based on how far behind the patient is.
+            deficit = self._pace_model.deficit(
+                summary.total_consumed_ml, summary.duration_s
+            )
+            alert_state = self._alert_engine.evaluate(summary, deficit_ml=deficit)
             self.led.apply(alert_state.level)
         else:
             # Discard any intake events that arrived while sleeping.
